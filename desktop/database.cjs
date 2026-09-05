@@ -1,6 +1,11 @@
 const { DatabaseSync } = require('node:sqlite');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
+
+function hashPassword(password) {
+  return crypto.createHash('sha256').update(String(password)).digest('hex');
+}
 
 function date(value) {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
@@ -14,7 +19,7 @@ function scheduleDate(f, period, year) {
   if(f.overrides?.[year]?.[period]) return f.overrides[year][period];
   const i=f.periods.indexOf(period), raw=f.dates[i];
   if (date(raw)) return raw;
-  if(f.id==='1601-C') return `${i===11?year+1:year}-${String(i===11?1:i+2).padStart(2,'0')}-${i===11?'15':'10'}`;
+  if(f.frequency==='Monthly'||f.id==='1601-C'||f.id==='0619-E') return `${i===11?year+1:year}-${String(i===11?1:i+2).padStart(2,'0')}-${i===11?'15':'10'}`;
   return `${period==='Annual'||period==='Q4'?year+1:year}-${raw}`;
 }
 class Store {
@@ -33,6 +38,11 @@ class Store {
     let changed=false;
     for(const f of defaults){changed=!!insert.run(f.id,f.name,f.frequency,JSON.stringify(f)).changes||changed;changed=!!fill.run(JSON.stringify(f),f.id).changes||changed;}
     if(changed||!this.db.prepare('SELECT id FROM deadlines LIMIT 1').get())this.saveForms(this.load().forms);
+    const companyCount=this.db.prepare('SELECT COUNT(*) n FROM company_login').get()?.n;
+    if(!companyCount){
+      this.db.prepare('INSERT OR IGNORE INTO company_login(id,company_name,username,password_hash,is_active) VALUES(1,?,?,?,1)')
+        .run('EOO Tax & Accounting','admin',hashPassword('taxguard2026'));
+    }
   }
   load() {
     const forms=this.db.prepare('SELECT * FROM forms ORDER BY id').all().map(f=>({...JSON.parse(f.schedule_json),id:f.code,name:f.name,frequency:f.frequency}));
@@ -93,6 +103,14 @@ class Store {
       this.bumpRevision();
     });
     return this.revision();
+  }
+  login(username,password){
+    required(username,'Username');
+    required(password,'Password');
+    const user=this.db.prepare('SELECT id,company_name,username,password_hash,is_active FROM company_login WHERE LOWER(username)=LOWER(?)').get(username.trim());
+    if(!user||user.is_active!==1)throw Error('Invalid username or password.');
+    if(user.password_hash!==hashPassword(password))throw Error('Invalid username or password.');
+    return {authenticated:true,company:user.company_name,username:user.username};
   }
   importWorkspace(data){
     if(this.db.prepare('SELECT COUNT(*) n FROM clients').get().n)throw Error('Import is available only before client records have been added.');

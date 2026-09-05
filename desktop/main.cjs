@@ -20,6 +20,7 @@ else app.whenReady().then(async()=>{
       if(!valid(e))throw Error('Untrusted database request.');
       let value;
       if(action==='load')value=db.load();
+      else if(action==='login')value=db.login(data?.username,data?.password);
       else if(action==='save'||action==='forms'){
         if(!Number.isSafeInteger(revision))throw Error('Reload TaxGuard before saving.');
         value=action==='save'?db.saveState(data,revision):db.saveForms(data,revision);

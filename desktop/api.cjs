@@ -14,6 +14,7 @@ process.stdin.on('end',()=>{
     seedSamples(store,root);
     let value;
     if(action==='load')value=store.load();
+    else if(action==='login')value=store.login(data?.username,data?.password);
     else if(action==='save'||action==='forms'){
       if(!Number.isSafeInteger(revision))throw Error('Reload TaxGuard before saving.');
       value=action==='save'?store.saveState(data,revision):store.saveForms(data,revision);

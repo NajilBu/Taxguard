@@ -89,5 +89,107 @@
       "04-15"
     ],
     "frequency": "Annual"
+  },
+  {
+    "id": "1702-Q",
+    "name": "Quarterly income tax · Corporations",
+    "periods": [
+      "Q1",
+      "Q2",
+      "Q3"
+    ],
+    "dates": [
+      "05-30",
+      "08-29",
+      "11-29"
+    ],
+    "frequency": "Quarterly"
+  },
+  {
+    "id": "0619-E",
+    "name": "Monthly creditable withholding · Expanded",
+    "periods": [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec"
+    ],
+    "dates": [],
+    "frequency": "Monthly"
+  },
+  {
+    "id": "1601-EQ",
+    "name": "Quarterly creditable withholding · Expanded",
+    "periods": [
+      "Q1",
+      "Q2",
+      "Q3",
+      "Q4"
+    ],
+    "dates": [
+      "04-30",
+      "07-31",
+      "10-31",
+      "01-31"
+    ],
+    "frequency": "Quarterly"
+  },
+  {
+    "id": "1601-FQ",
+    "name": "Quarterly final withholding tax return",
+    "periods": [
+      "Q1",
+      "Q2",
+      "Q3",
+      "Q4"
+    ],
+    "dates": [
+      "04-30",
+      "07-31",
+      "10-31",
+      "01-31"
+    ],
+    "frequency": "Quarterly"
+  },
+  {
+    "id": "0605",
+    "name": "Payment form / Annual registration",
+    "periods": [
+      "Annual"
+    ],
+    "dates": [
+      "01-31"
+    ],
+    "frequency": "Annual"
+  },
+  {
+    "id": "1604-C",
+    "name": "Annual withholding info return · Compensation",
+    "periods": [
+      "Annual"
+    ],
+    "dates": [
+      "01-31"
+    ],
+    "frequency": "Annual"
+  },
+  {
+    "id": "1604-E",
+    "name": "Annual withholding info return · Expanded",
+    "periods": [
+      "Annual"
+    ],
+    "dates": [
+      "03-01"
+    ],
+    "frequency": "Annual"
   }
 ]

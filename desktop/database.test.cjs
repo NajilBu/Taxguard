@@ -47,3 +47,14 @@ test('Two connections reject stale writes without overwriting newer data',()=>{
   assert.throws(()=>b.saveForms(old.forms,old.revision),/another window/);
   assert.equal(b.load().clients[0].name,client.name);a.close();b.close();
 });
+test('Store authenticates valid company credentials and rejects invalid credentials',()=>{
+  const {file}=fixture(),s=new Store(file,root);
+  const result=s.login('admin','taxguard2026');
+  assert.equal(result.authenticated,true);
+  assert.equal(result.company,'EOO Tax & Accounting');
+  assert.equal(result.username,'admin');
+  assert.throws(()=>s.login('admin','wrongpassword'),/Invalid username or password/);
+  assert.throws(()=>s.login('unknown','taxguard2026'),/Invalid username or password/);
+  assert.throws(()=>s.login('','taxguard2026'),/Username is required/);
+  s.close();
+});

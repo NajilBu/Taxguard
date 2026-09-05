@@ -1,3 +1,116 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TaxGuard — Compliance workspace</title><link rel="stylesheet" href="style.css"></head>
-<body><aside><a class="brand" href="#"><span class="shield">T</span>TaxGuard</a><div class="workspace">WORKSPACE</div><nav><button data-page="dashboard" class="selected">▦ <span>Overview</span></button><button data-page="clients">♙ <span>Client directory</span></button><button data-page="tracker">☷ <span>Compliance tracker</span></button><button data-page="deadlines">◷ <span>Deadline reference</span></button><button data-page="settings">⚙ <span>Settings</span></button></nav><div class="sidebar-note"><span class="live-dot"></span> Compliance workspace<p>Centralized filing records.</p></div><div class="firm"><div class="avatar">EO</div><div>EOO Tax & Accounting<small>Compliance team</small></div></div></aside><main><header><div class="breadcrumb">Workspace <span>/</span> <b id="crumb">Overview</b></div><div class="header-right"><span class="avatar">AC</span></div></header><section id="content"></section><footer>TaxGuard · Integrated multi-year compliance monitoring <span>Changes saved in this browser</span></footer></main><dialog id="modal"></dialog><div id="toast" role="status"></div><script src="browser-database.js"></script><script src="app.js"></script><script src="database-ui.js"></script></body></html>
+<body>
+  <section id="login-landing" class="login-landing-container">
+    <div class="login-hero">
+      <div class="login-hero-glow"></div>
+      <div class="login-hero-content">
+        <div class="login-brand">
+          <span class="shield">T</span>
+          <span class="brand-name">TaxGuard</span>
+        </div>
+        <div class="login-hero-badge">SECURE COMPLIANCE PLATFORM</div>
+        <h1 class="login-hero-title">Multi-Year Philippine Tax Compliance &amp; Tracking</h1>
+        <p class="login-hero-desc">Manage Bureau of Internal Revenue obligations with precision. Maintain client directories, enforce statutory filing schedules, and track portfolio submissions in an offline-first transactional workstation.</p>
+        
+        <div class="login-feature-list">
+          <div class="login-feature-card">
+            <div class="feature-card-icon">📋</div>
+            <div>
+              <strong>BIR Form Schedules</strong>
+              <p>Automated periods and due dates for 1701-Q, 2550-Q, 2551-Q, 1601-C, 1701, and 1702.</p>
+            </div>
+          </div>
+          <div class="login-feature-card">
+            <div class="feature-card-icon">⚡</div>
+            <div>
+              <strong>High-Integrity Local Engine</strong>
+              <p>ACID-compliant SQLite with optimistic revision locking and tamper-resistant storage.</p>
+            </div>
+          </div>
+          <div class="login-feature-card">
+            <div class="feature-card-icon">🛡️</div>
+            <div>
+              <strong>Audit-Ready Portfolio Tracking</strong>
+              <p>Instant status identification, confirmation tracking, and multi-year compliance trends.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="login-system-status">
+          <span class="live-dot"></span>
+          <span>Standard Calendar 2024–2026 · Local SQLite Station Ready</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="login-panel">
+      <div class="login-box">
+        <div class="login-box-header">
+          <div class="firm-chip">
+            <span class="avatar">EO</span>
+            <div>
+              <strong id="login-company-display">EOO Tax &amp; Accounting</strong>
+              <small>Compliance Station</small>
+            </div>
+          </div>
+          <h2>Sign In to Workspace</h2>
+          <p>Authenticate with your company workstation credentials to continue.</p>
+        </div>
+
+        <form id="login-form" autocomplete="on">
+          <div id="login-error-alert" class="login-alert" style="display:none;" role="alert"></div>
+
+          <div class="form-group">
+            <label for="login-username">Username or Firm ID</label>
+            <div class="input-with-icon">
+              <span class="input-icon">👤</span>
+              <input type="text" id="login-username" name="username" placeholder="e.g. admin" required autocomplete="username" autofocus>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div class="label-row">
+              <label for="login-password">Password</label>
+              <button type="button" class="link-btn" id="fill-demo-btn">Fill demo credentials</button>
+            </div>
+            <div class="input-with-icon">
+              <span class="input-icon">🔒</span>
+              <input type="password" id="login-password" name="password" placeholder="••••••••" required autocomplete="current-password">
+              <button type="button" id="toggle-pw-btn" class="pw-toggle-btn" title="Toggle password visibility" aria-label="Toggle password visibility">👁</button>
+            </div>
+          </div>
+
+          <div class="login-form-options">
+            <label class="remember-label">
+              <input type="checkbox" id="remember-device" checked>
+              <span>Keep workstation signed in</span>
+            </label>
+          </div>
+
+          <button type="submit" id="login-btn" class="btn primary login-submit-btn">
+            <span class="btn-text">Sign In to TaxGuard</span>
+            <span class="btn-icon">→</span>
+          </button>
+        </form>
+
+        <div class="demo-account-callout">
+          <div class="callout-header">
+            <span class="callout-badge">DEFAULT ACCESS</span>
+            <span>Pre-configured account</span>
+          </div>
+          <div class="callout-creds">
+            <div><small>User:</small> <code>admin</code></div>
+            <div><small>Password:</small> <code>taxguard2026</code></div>
+          </div>
+        </div>
+
+        <div class="login-box-footer">
+          <span>TaxGuard Compliance Workspace v0.1.0</span>
+          <span>Protected Local Workstation</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <aside><a class="brand" href="#"><span class="shield">T</span>TaxGuard</a><div class="workspace">WORKSPACE</div><nav><button data-page="dashboard" class="selected">▦ <span>Overview</span></button><button data-page="clients">♙ <span>Client directory</span></button><button data-page="tracker">☷ <span>Compliance tracker</span></button><button data-page="deadlines">◷ <span>Deadline reference</span></button><button data-page="settings">⚙ <span>Settings</span></button></nav><div class="sidebar-note"><span class="live-dot"></span> Compliance workspace<p>Centralized filing records.</p></div><div class="firm"><div class="avatar">EO</div><div class="firm-info">EOO Tax &amp; Accounting<small>Compliance team</small></div></div></aside><main><header><div class="breadcrumb">Workspace <span>/</span> <b id="crumb">Overview</b></div><div class="header-right"><span class="avatar" title="Signed in as admin">AC</span><button type="button" class="btn text-btn header-logout-btn" id="header-logout-btn">Sign out</button></div></header><section id="content"></section><footer>TaxGuard · Integrated multi-year compliance monitoring <span>Changes saved in this browser</span></footer></main><dialog id="modal"></dialog><div id="toast" role="status"></div><script src="browser-database.js"></script><script src="app.js"></script><script src="database-ui.js"></script></body></html>

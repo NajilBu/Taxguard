@@ -21,7 +21,7 @@ if (!in_array($host, ['localhost','127.0.0.1','[::1]'], true)) failRequest(403, 
 $body = file_get_contents('php://input', false, null, 0, 10*1024*1024+1);
 if (strlen($body)>10*1024*1024) failRequest(413, 'Request exceeds 10 MB.');
 $payload = json_decode($body, true);
-if (!is_array($payload) || !in_array($payload['action'] ?? '', ['load','save','forms'], true)) failRequest(400, 'Invalid database operation.');
+if (!is_array($payload) || !in_array($payload['action'] ?? '', ['load','save','forms','login'], true)) failRequest(400, 'Invalid database operation.');
 $node = getenv('TAXGUARD_NODE_PATH') ?: 'C:\\Program Files\\nodejs\\node.exe';
 if (!is_file($node)) failRequest(503, 'Node.js is required. Install Node.js 22.13 or later, or configure TAXGUARD_NODE_PATH.');
 $process = proc_open([$node, '--disable-warning=ExperimentalWarning', __DIR__.'/desktop/api.cjs'], [0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']], $pipes, __DIR__, null, ['bypass_shell'=>true]);

@@ -11,7 +11,12 @@
     if(request.status!==200||!result.ok)throw Error(result.error||'Database unavailable.');
     return result.value;
   }
-  window.taxguardDB={load:()=>call('load'),save:(data,revision)=>call('save',data,revision),saveForms:(data,revision)=>call('forms',data,revision)};
+  window.taxguardDB={
+    load:()=>call('load'),
+    login:(username,password)=>call('login',{username,password}),
+    save:(data,revision)=>call('save',data,revision),
+    saveForms:(data,revision)=>call('forms',data,revision)
+  };
   try{window.taxguardDB.load();}catch(error){
     document.querySelector('#content').textContent=error.message;
     document.querySelector('footer span').textContent='SQLite connection failed';
