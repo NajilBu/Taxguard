@@ -1,0 +1,16 @@
+{
+  "name": "taxguard-desktop",
+  "productName": "TaxGuard",
+  "version": "0.1.0",
+  "private": true,
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test desktop/database.test.cjs desktop/api.test.cjs",
+    "test:desktop": "electron . --smoke-test",
+    "test:browser": "electron desktop/browser-smoke.cjs"
+  },
+  "devDependencies": {
+    "electron": "44.2.0"
+  }
+}

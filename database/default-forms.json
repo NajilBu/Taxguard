@@ -1,0 +1,93 @@
+[
+  {
+    "id": "1701-Q",
+    "name": "Quarterly income tax · Individuals",
+    "periods": [
+      "Q1",
+      "Q2",
+      "Q3"
+    ],
+    "dates": [
+      "05-15",
+      "08-15",
+      "11-15"
+    ],
+    "frequency": "Quarterly"
+  },
+  {
+    "id": "2550-Q",
+    "name": "Quarterly value-added tax",
+    "periods": [
+      "Q1",
+      "Q2",
+      "Q3",
+      "Q4"
+    ],
+    "dates": [
+      "04-25",
+      "07-25",
+      "10-25",
+      "01-25"
+    ],
+    "frequency": "Quarterly"
+  },
+  {
+    "id": "2551-Q",
+    "name": "Quarterly percentage tax",
+    "periods": [
+      "Q1",
+      "Q2",
+      "Q3",
+      "Q4"
+    ],
+    "dates": [
+      "04-25",
+      "07-25",
+      "10-25",
+      "01-25"
+    ],
+    "frequency": "Quarterly"
+  },
+  {
+    "id": "1601-C",
+    "name": "Monthly withholding · Compensation",
+    "periods": [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec"
+    ],
+    "dates": [],
+    "frequency": "Monthly"
+  },
+  {
+    "id": "1701",
+    "name": "Annual income tax · Individuals",
+    "periods": [
+      "Annual"
+    ],
+    "dates": [
+      "04-15"
+    ],
+    "frequency": "Annual"
+  },
+  {
+    "id": "1702",
+    "name": "Annual income tax · Corporations",
+    "periods": [
+      "Annual"
+    ],
+    "dates": [
+      "04-15"
+    ],
+    "frequency": "Annual"
+  }
+]

@@ -1,0 +1,8 @@
+[
+  {"id":1,"name":"Dela Cruz Trading","tin":"000-000-001-000","type":"Sole proprietorship","status":"Active","tax":"VAT","start":"2021-01-01","forms":["1701-Q","2550-Q","1701"]},
+  {"id":2,"name":"Marcedonio Photography","tin":"000-000-002-000","type":"Sole proprietorship","status":"Active","tax":"NVAT","start":"2022-01-01","forms":["1701-Q","2551-Q","1701"]},
+  {"id":3,"name":"Santos Retail Corporation","tin":"000-000-003-000","type":"Corporation","status":"Active","tax":"VAT","start":"2023-01-01","forms":["2550-Q","1601-C","1702"]},
+  {"id":4,"name":"Abundant Enterprises Co.","tin":"000-000-004-000","type":"Partnership","status":"Active","tax":"VAT","start":"2023-03-08","forms":["2550-Q","1702"]},
+  {"id":5,"name":"Acuña, Jennifer Delgado","tin":"000-000-005-000","type":"Sole proprietorship","status":"For closure","tax":"VAT","start":"2023-09-29","forms":["1701-Q","2550-Q","1601-C","1701"]},
+  {"id":6,"name":"Adamos, Robert Bryan Ramos","tin":"000-000-006-000","type":"Sole proprietorship","status":"Active","tax":"NVAT","start":"2020-03-09","forms":["1701-Q","2551-Q","1701"]}
+]
