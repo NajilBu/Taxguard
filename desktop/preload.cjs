@@ -5,5 +5,6 @@ contextBridge.exposeInMainWorld('taxguardDB',{
   login:(username,password)=>call('login',{username,password}),
   save:(state,revision)=>call('save',state,revision),
   saveForms:(forms,revision)=>call('forms',forms,revision),
-  importRecords:()=>ipcRenderer.invoke('records:import')
+  importRecords:()=>ipcRenderer.invoke('records:import'),
+  savePdf:(defaultName)=>ipcRenderer.invoke('report:savePdf',defaultName)
 });

@@ -11,7 +11,16 @@ if(smoke)app.setPath('userData',fs.mkdtempSync(path.join(require('node:os').tmpd
 let db,win;
 if(!app.requestSingleInstanceLock())app.quit();
 else app.whenReady().then(async()=>{
-  const filename=smoke?path.join(app.getPath('userData'),'taxguard.db'):(process.env.TAXGUARD_DB_PATH||path.join(root,'database/taxguard.db'));
+  const filename=smoke
+    ? path.join(app.getPath('userData'),'taxguard.db')
+    : (process.env.TAXGUARD_DB_PATH || (app.isPackaged ? path.join(app.getPath('userData'),'taxguard.db') : path.join(root,'database/taxguard.db')));
+  if(app.isPackaged && !fs.existsSync(filename)){
+    fs.mkdirSync(path.dirname(filename), {recursive:true});
+    const templateDb = path.join(root, 'database/taxguard.db');
+    if(fs.existsSync(templateDb)){
+      try { fs.copyFileSync(templateDb, filename); } catch(e){}
+    }
+  }
   db=new Store(filename,root);
   if(!smoke)seedSamples(db,root);
   const valid=e=>e.senderFrame?.url===entry && e.senderFrame===e.sender.mainFrame;
@@ -37,11 +46,40 @@ else app.whenReady().then(async()=>{
     if(fs.statSync(filename).size>10*1024*1024)throw Error('Import file exceeds 10 MB.');
     return db.importWorkspace(JSON.parse(fs.readFileSync(filename,'utf8')));
   });
+  ipcMain.handle('report:savePdf',async(e,defaultName)=>{
+    if(!valid(e))throw Error('Untrusted PDF save request.');
+    const currentWin=BrowserWindow.fromWebContents(e.sender)||win;
+    const pdfData=await e.sender.printToPDF({
+      printBackground:true,
+      preferCSSPageSize:true
+    });
+    const result=await dialog.showSaveDialog(currentWin,{
+      title:'Save TaxGuard Report as PDF',
+      defaultPath:defaultName||'TaxGuard-Report.pdf',
+      filters:[{name:'PDF Document',extensions:['pdf']}]
+    });
+    if(result.canceled||!result.filePath)return{saved:false};
+    fs.writeFileSync(result.filePath,pdfData);
+    return{saved:true,filePath:result.filePath};
+  });
   win=new BrowserWindow({width:1400,height:900,show:!smoke,webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true}});
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
-  win.webContents.on('will-navigate',(e,url)=>{if(url!==entry)e.preventDefault()});
+  win.webContents.on('will-navigate',(e,url)=>{if(url!==entry && !url.startsWith('blob:') && !url.startsWith('data:'))e.preventDefault()});
+  win.webContents.session.on('will-download',(event,item)=>{
+    const defaultPath=path.join(app.getPath('downloads'),item.getFilename());
+    item.setSavePath(defaultPath);
+    item.once('done',(event,state)=>{
+      if(state==='completed'){
+        try{win.webContents.executeJavaScript(`notify('Report saved to Downloads: ${item.getFilename().replace(/'/g,"\\'")}')`);}catch(e){}
+      }
+    });
+  });
   win.webContents.session.setPermissionRequestHandler((_w,_p,callback)=>callback(false));
+
   win.webContents.session.webRequest.onHeadersReceived((details,callback)=>callback({responseHeaders:{...details.responseHeaders,'Content-Security-Policy':["default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'none'"]}}));
+  win.on('close',()=>{
+    try{win.webContents.executeJavaScript('sessionStorage.removeItem("taxguard_auth");localStorage.removeItem("taxguard_auth");');}catch(e){}
+  });
   await win.loadFile(path.join(root,'index.html'));
   if(smoke){
     await win.webContents.executeJavaScript(`(async()=>{

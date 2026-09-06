@@ -93,7 +93,93 @@ function clientTrendChart(){
   const summary=points.map(p=>`${p.year}: ${p.count} clients`).join('; ');
   return `<div class="panel client-trend"><div class="panel-head"><div><h2>Clients over time</h2><p>Cumulative client count by Start of Filing year · Through ${year}</p></div><span class="subtle">${points.at(-1).count} CLIENTS</span></div><div class="panel-body"><svg viewBox="0 0 960 248" role="img" aria-labelledby="client-trend-title client-trend-desc"><title id="client-trend-title">Clients over time</title><desc id="client-trend-desc">${summary}. Includes all client statuses.</desc>${Array.from({length:5},(_,i)=>{let n=i*step;return `<line x1="52" y1="${y(n)}" x2="928" y2="${y(n)}" stroke="#e9eef4"/><text x="36" y="${y(n)+4}" text-anchor="end">${n}</text>`}).join('')}<polygon points="52,204 ${coords} 928,204" fill="#eef4fe"/><polyline points="${coords}" fill="none" stroke="#4b84e5" stroke-width="3" stroke-linejoin="round"/>${points.map((p,i)=>`<g><circle cx="${x(i)}" cy="${y(p.count)}" r="5" fill="#4b84e5" stroke="white" stroke-width="2"><title>${p.year}: ${p.count} clients</title></circle><text x="${x(i)}" y="${y(p.count)-13}" text-anchor="middle" class="trend-value">${p.count}</text>${i%Math.max(1,Math.ceil(points.length/10))===0||i===points.length-1?`<text x="${x(i)}" y="231" text-anchor="middle">${p.year}</text>`:''}</g>`).join('')}</svg><div class="subtle">Includes all client statuses. Counts reflect filing start dates, not account creation dates.</div></div></div>`;
 }
-function clientModal(id){const c=state.clients.find(x=>x.id===id),m=document.querySelector('#modal');if(!c)return;m.innerHTML=`<h2>${esc(c.name)}</h2><p>${esc(c.type)} · ${esc(c.tax)}</p><div class="client-detail-grid"><div><small>TIN</small><strong>${esc(c.tin)}</strong></div><div><small>Status</small><strong>${esc(c.status)}</strong></div><div><small>Start of filing</small><strong>${esc(c.start)}</strong></div><div><small>Required forms</small><strong>${c.forms.map(esc).join(', ')}</strong></div></div><div class="modal-actions"><button class="btn" id="close-client">Close</button><button class="btn primary" id="edit-client-detail">Edit client</button></div>`;m.showModal();m.querySelector('#close-client').onclick=()=>closeModal(m);m.querySelector('#edit-client-detail').onclick=()=>{closeModal(m,()=>editClient(id))}}function settings(){const current=localStorage.getItem('taxguard-theme')||'blue';return heading('Settings','Personalize the TaxGuard workspace.','')+`<div class="panel settings-panel"><div class="panel-head"><div><h2>Color theme</h2><p>Choose the appearance used across the system.</p></div></div><div class="theme-options">${[['blue','Default blue'],['navy','Dark navy'],['green','Forest green'],['purple','Soft purple']].map(([v,l])=>`<button class="theme-option ${current===v?'active':''}" data-theme="${v}"><span class="theme-swatch ${v}"></span><span>${l}</span>${current===v?'<b>✓</b>':''}</button>`).join('')}</div></div>`}
+function clientModal(id){
+  const c=state.clients.find(x=>x.id===id),m=document.querySelector('#modal');
+  if(!c)return;
+
+  const allObs=obligations();
+  const clientObs=allObs.filter(o=>o.c.id===c.id);
+  const total=clientObs.length;
+  const filed=clientObs.filter(o=>o.filing).length;
+  const overdue=clientObs.filter(o=>!o.filing&&o.due<today).length;
+  const pending=total-filed-overdue;
+  const pct=total?Math.round((filed/total)*100):0;
+  const annualStatus=status(c,allObs);
+
+  const clientForms=forms.filter(f=>c.forms.includes(f.id));
+  const formBreakdown=clientForms.map(f=>{
+    const fObs=clientObs.filter(o=>o.f.id===f.id);
+    return {
+      form:f,
+      obs:fObs,
+      filed:fObs.filter(o=>o.filing).length,
+      total:fObs.length
+    };
+  });
+
+  m.innerHTML=`<div class="client-modal-wrap">
+    <div class="client-modal-header">
+      <div>
+        <h2>${esc(c.name)}</h2>
+        <p class="client-modal-sub">${esc(c.type)} · ${esc(c.tax)}</p>
+      </div>
+      <div>${badge(c.status)}</div>
+    </div>
+    <div class="client-detail-grid">
+      <div><small>TIN</small><strong>${esc(c.tin)}</strong></div>
+      <div><small>Start of filing</small><strong>${esc(c.start)}</strong></div>
+      <div><small>Required forms</small><strong>${c.forms.map(esc).join(', ')}</strong></div>
+      <div><small>${year} Annual status</small><strong>${badge(annualStatus)}</strong></div>
+    </div>
+    <div class="client-progress-card">
+      <div class="client-progress-header">
+        <div>
+          <strong>${year} Compliance Progress</strong>
+          <small class="subtle">${filed} of ${total} obligations filed</small>
+        </div>
+        <span class="client-progress-pct">${pct}%</span>
+      </div>
+      <div class="track" style="margin:8px 0 12px;height:7px;">
+        <div class="fill" style="width:${pct}%;background:${pct===100?'#16866b':'#2766db'};"></div>
+      </div>
+      <div class="client-progress-stats">
+        <span class="progress-pill filed">✓ ${filed} Filed</span>
+        <span class="progress-pill pending">◷ ${pending} Pending</span>
+        ${overdue>0?`<span class="progress-pill overdue">! ${overdue} Overdue</span>`:''}
+      </div>
+      ${total>0?`<div class="client-obligations-list">
+        ${formBreakdown.map(fb=>`
+          <div class="client-form-row">
+            <div class="client-form-meta">
+              <strong>${esc(fb.form.id)}</strong>
+              <small>${esc(fb.form.name.split(' · ')[0])}</small>
+              <span class="subtle form-ratio">${fb.filed}/${fb.total}</span>
+            </div>
+            <div class="period-badges-row">
+              ${fb.obs.map(o=>{
+                if(o.filing){
+                  return `<span class="period-badge complete" title="Filed on ${esc(o.filing.date)}${o.filing.reference?' · Ref: '+esc(o.filing.reference):''}">✓ ${esc(o.p)}</span>`;
+                }else if(o.due<today){
+                  return `<span class="period-badge overdue" title="Overdue · Due ${esc(o.due)}">! ${esc(o.p)}</span>`;
+                }else{
+                  return `<span class="period-badge pending" title="Due ${esc(o.due)}">${esc(o.p)}</span>`;
+                }
+              }).join('')}
+            </div>
+          </div>
+        `).join('')}
+      </div>`:`<div class="empty" style="padding:15px 0;">No obligations scheduled for ${year}.</div>`}
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="close-client">Close</button>
+      <button class="btn primary" id="edit-client-detail">Edit client</button>
+    </div>
+  </div>`;
+  m.showModal();
+  m.querySelector('#close-client').onclick=()=>closeModal(m);
+  m.querySelector('#edit-client-detail').onclick=()=>{closeModal(m,()=>editClient(id))}
+}
+function settings(){const current=localStorage.getItem('taxguard-theme')||'blue';return heading('Settings','Personalize the TaxGuard workspace.','')+`<div class="panel settings-panel"><div class="panel-head"><div><h2>Color theme</h2><p>Choose the appearance used across the system.</p></div></div><div class="theme-options">${[['blue','Default blue'],['navy','Dark navy'],['green','Forest green'],['purple','Soft purple']].map(([v,l])=>`<button class="theme-option ${current===v?'active':''}" data-theme="${v}"><span class="theme-swatch ${v}"></span><span>${l}</span>${current===v?'<b>✓</b>':''}</button>`).join('')}</div></div>`}
 document.addEventListener('click',e=>{const b=e.target.closest('.theme-option[data-theme]');if(!b)return;const chosen=b.dataset.theme,m=document.querySelector('#modal'),label=b.querySelector('span:last-of-type')?.textContent||chosen;m.innerHTML=`<h2>Apply color theme?</h2><p>Change the workspace appearance to <strong>${label}</strong>?</p><div class="modal-actions"><button class="btn" id="cancel-theme">Cancel</button><button class="btn primary" id="apply-theme">Apply theme</button></div>`;m.showModal();m.querySelector('#cancel-theme').onclick=()=>closeModal(m);m.querySelector('#apply-theme').onclick=()=>{localStorage.setItem('taxguard-theme',chosen);document.body.dataset.theme=chosen;document.documentElement.style.setProperty('--blue',{blue:'#2766db',navy:'#4776b8',green:'#16866b',purple:'#7656c7',orange:'#e67e22',red:'#d9534f'}[chosen]||'#2766db');closeModal(m);setTimeout(()=>{render();notify('Theme updated.')},180)}});document.body.dataset.theme=localStorage.getItem('taxguard-theme')||'blue';document.documentElement.style.setProperty('--blue',{blue:'#2766db',navy:'#4776b8',green:'#16866b',purple:'#7656c7',orange:'#e67e22',red:'#d9534f'}[localStorage.getItem('taxguard-theme')||'blue']||'#2766db');render();
 document.addEventListener("click",e=>{const n=e.target.closest("nav button[data-page=\"settings\"]");if(n){e.preventDefault();go("settings")}});
 settings=function(){const c=localStorage.getItem('taxguard-theme-color')||'#2766db';return heading('Settings','Personalize the TaxGuard workspace.','')+'<div class="panel settings-panel"><div class="panel-head"><div><h2>Color theme</h2><p>Choose a custom workspace accent color.</p></div></div><div class="color-picker-wrap"><button type="button" class="btn primary" id="choose-color">Choose color theme</button><strong>'+c.toUpperCase()+'</strong></div></div>'};
@@ -102,7 +188,7 @@ settings=function(){const current=localStorage.getItem('taxguard-theme-color')||
 settings=function(){const c=localStorage.getItem('taxguard-theme-color')||'#2766db';return heading('Settings','Personalize the TaxGuard workspace.','')+`<div class="panel settings-panel"><div class="panel-head"><div><h2>Color theme</h2><p>Choose a custom workspace accent color.</p></div></div><div class="color-picker-wrap"><button type="button" class="btn primary" id="choose-color">Choose color theme</button><strong>${c.toUpperCase()}</strong></div></div>`};render();
 settings=function(){return heading('Settings','System preferences and configuration.','')+`<div class="panel settings-panel"><div class="panel-head"><div><h2>Settings</h2><p>Additional system settings will be available here.</p></div></div><div class="empty">No settings configured yet.</div></div>`};render();
 settings=function(){const c=localStorage.getItem('taxguard-theme-color')||'#2766db';return heading('Settings','Personalize the TaxGuard workspace.','')+`<div class="panel settings-panel"><div class="panel-head"><div><h2>Color theme</h2><p>Choose a custom workspace accent color.</p></div></div><div class="color-picker-wrap"><button type="button" class="btn primary" id="choose-color">Choose color</button><strong>${c.toUpperCase()}</strong></div></div>`};render();
-settings=function(){const current=document.body.dataset.theme||'blue';return heading('Settings','Personalize the TaxGuard workspace.','')+`<div class="panel settings-panel"><div class="panel-head"><div><h2>Color theme</h2><p>Choose a preset workspace accent color.</p></div></div><div class="theme-options">${[['blue','Blue'],['navy','Navy'],['green','Green'],['purple','Purple'],['orange','Orange'],['red','Red']].map(([v,l])=>`<button class="theme-option ${current===v?'active':''}" data-theme="${v}"><span class="theme-swatch ${v}"></span><span>${l}</span>${current===v?'<b>✓</b>':''}</button>`).join('')}</div></div>`};render();
+settings=function(){const current=document.body.dataset.theme||'blue';return heading('Settings','Personalize the TaxGuard workspace.','')+`<div class="settings-grid"><div class="panel settings-panel"><div class="panel-head"><div><h2>Color theme</h2><p>Choose a preset workspace accent color.</p></div></div><div class="theme-options">${[['blue','Blue'],['navy','Navy'],['green','Green'],['purple','Purple'],['orange','Orange'],['red','Red']].map(([v,l])=>`<button class="theme-option ${current===v?'active':''}" data-theme="${v}"><span class="theme-swatch ${v}"></span><span>${l}</span>${current===v?'<b>✓</b>':''}</button>`).join('')}</div></div></div>`};render();
 document.addEventListener('input',e=>{if(e.target.id!=='legacy-theme-color')return;const color=e.target.value,m=document.querySelector('#modal');m.innerHTML=`<h2>Apply color theme?</h2><p>Use <strong>${color.toUpperCase()}</strong> as the workspace accent?</p><div class="modal-actions"><button class="btn" id="cancel-theme">Cancel</button><button class="btn primary" id="apply-theme">Apply theme</button></div>`;m.showModal();m.querySelector('#cancel-theme').onclick=()=>closeModal(m);m.querySelector('#apply-theme').onclick=()=>{localStorage.setItem('taxguard-theme-color',color);document.documentElement.style.setProperty('--blue',color);closeModal(m);notify('Theme updated.')}});
 render();
 document.addEventListener("click",e=>{const b=e.target.closest(".theme-option[data-theme]");if(!b)return;const m=document.querySelector("#modal"),colors={blue:"#2766db",navy:"#4776b8",green:"#16866b",purple:"#7656c7",orange:"#e67e22",red:"#d9534f"};setTimeout(()=>m.style.setProperty("--blue",colors[b.dataset.theme]||colors.blue),0)});
@@ -110,7 +196,9 @@ document.addEventListener("click",e=>{const b=e.target.closest(".theme-option[da
 // Authentication and Login Landing Page
 function getStoredAuth(){
   try{
-    const s=sessionStorage.getItem('taxguard_auth')||localStorage.getItem('taxguard_auth');
+    // Auth only lives in sessionStorage for active session. Every app exit signs out the user.
+    localStorage.removeItem('taxguard_auth');
+    const s=sessionStorage.getItem('taxguard_auth');
     return s?JSON.parse(s):null;
   }catch{return null;}
 }
@@ -130,7 +218,7 @@ function setAuthState(loggedIn,authInfo){
     document.body.classList.add('logged-out');
   }
 }
-function attemptLogin(username,password,remember){
+function attemptLogin(username,password){
   const alertEl=document.querySelector('#login-error-alert');
   const submitBtn=document.querySelector('#login-btn');
   const btnText=submitBtn?.querySelector('.btn-text');
@@ -159,8 +247,7 @@ function attemptLogin(username,password,remember){
     if(result&&result.authenticated){
       const dataStr=JSON.stringify(result);
       sessionStorage.setItem('taxguard_auth',dataStr);
-      if(remember)localStorage.setItem('taxguard_auth',dataStr);
-      else localStorage.removeItem('taxguard_auth');
+      localStorage.removeItem('taxguard_auth');
       setAuthState(true,result);
       notify(`Welcome back, ${result.username}!`);
       render();
@@ -184,8 +271,7 @@ document.querySelector('#login-form')?.addEventListener('submit',e=>{
   e.preventDefault();
   const u=document.querySelector('#login-username')?.value;
   const p=document.querySelector('#login-password')?.value;
-  const r=document.querySelector('#remember-device')?.checked;
-  attemptLogin(u,p,r);
+  attemptLogin(u,p);
 });
 document.querySelector('#fill-demo-btn')?.addEventListener('click',()=>{
   const u=document.querySelector('#login-username');

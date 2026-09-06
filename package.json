@@ -6,11 +6,43 @@
   "main": "desktop/main.cjs",
   "scripts": {
     "start": "electron .",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
     "test": "node --test desktop/database.test.cjs desktop/api.test.cjs",
     "test:desktop": "electron . --smoke-test",
     "test:browser": "electron desktop/browser-smoke.cjs"
   },
+  "build": {
+    "appId": "ph.taxguard.compliance",
+    "productName": "TaxGuard",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "index.html",
+      "style.css",
+      "app.js",
+      "browser-database.js",
+      "database-ui.js",
+      "desktop/**/*",
+      "database/schema.sql",
+      "database/seed.sql",
+      "database/default-forms.json",
+      "database/taxguard.db"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
   "devDependencies": {
-    "electron": "44.2.0"
+    "electron": "44.2.0",
+    "electron-builder": "^26.15.3"
   }
 }

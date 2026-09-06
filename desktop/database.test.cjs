@@ -58,3 +58,88 @@ test('Store authenticates valid company credentials and rejects invalid credenti
   assert.throws(()=>s.login('','taxguard2026'),/Username is required/);
   s.close();
 });
+test('Landing page contains no sqlite references and enforces session-only sign out on exit',()=>{
+  const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
+  const loginSection=html.slice(html.indexOf('<section id="login-landing"'),html.indexOf('</section>'));
+  assert.equal(/sqlite/i.test(loginSection),false,'Landing page must not contain SQLite references');
+  const appJs=fs.readFileSync(path.join(root,'app.js'),'utf8');
+  assert.equal(appJs.includes("localStorage.removeItem('taxguard_auth')"),true);
+  assert.equal(appJs.includes("sessionStorage.getItem('taxguard_auth')"),true);
+});
+test('clientModal renders client compliance progress and obligations breakdown',()=>{
+  const appJs=fs.readFileSync(path.join(root,'app.js'),'utf8');
+  assert.equal(appJs.includes('client-progress-card'),true);
+  assert.equal(appJs.includes('client-progress-pct'),true);
+  assert.equal(appJs.includes('client-obligations-list'),true);
+});
+test('Settings layout renders color theme and backup data storage side by side in settings-grid',()=>{
+  const dbUiJs=fs.readFileSync(path.join(root,'database-ui.js'),'utf8');
+  assert.equal(dbUiJs.includes('settings-grid'),true);
+  assert.equal(dbUiJs.includes('storage-panel'),true);
+  const styleCss=fs.readFileSync(path.join(root,'style.css'),'utf8');
+  assert.equal(styleCss.includes('.settings-grid'),true);
+});
+test('Settings reports section includes Excel exports with UTF-8 BOM compatibility',()=>{
+  const dbUiJs=fs.readFileSync(path.join(root,'database-ui.js'),'utf8');
+  assert.equal(dbUiJs.includes('exportToExcel'),true);
+  assert.equal(dbUiJs.includes('\\uFEFF'),true);
+  assert.equal(dbUiJs.includes('export-summary-report'),true);
+  assert.equal(dbUiJs.includes('export-filings-report'),true);
+  assert.equal(dbUiJs.includes('export-clients-report'),true);
+  const styleCss=fs.readFileSync(path.join(root,'style.css'),'utf8');
+  assert.equal(styleCss.includes('.reports-panel'),true);
+  assert.equal(styleCss.includes('.report-stat-strip'),true);
+});
+test('Compliance report preview contains visual SVG charts, user commentary editor, and export buttons',()=>{
+  const dbUiJs=fs.readFileSync(path.join(root,'database-ui.js'),'utf8');
+  assert.equal(dbUiJs.includes('open-report-preview'),true);
+  assert.equal(dbUiJs.includes('openReportPreview'),true);
+  assert.equal(dbUiJs.includes('renderSvgDonut'),true);
+  assert.equal(dbUiJs.includes('renderSvgFormBars'),true);
+  assert.equal(dbUiJs.includes('report-analysis-input'),true);
+  assert.equal(dbUiJs.includes('report-analysis-text'),true);
+  assert.equal(dbUiJs.includes('preview-save-pdf'),true);
+  assert.equal(dbUiJs.includes('preview-save-excel'),false);
+  const styleCss=fs.readFileSync(path.join(root,'style.css'),'utf8');
+  assert.equal(styleCss.includes('dialog.report-modal'),true);
+  assert.equal(styleCss.includes('.report-sheet'),true);
+  assert.equal(styleCss.includes('.sheet-analysis-card'),true);
+  assert.equal(styleCss.includes('@media print'),true);
+});
+test('All 3 report cards have interactive card-click previews, enlarged comment box, and PDF report export',()=>{
+  const dbUiJs=fs.readFileSync(path.join(root,'database-ui.js'),'utf8');
+  // All 3 cards configured
+  assert.equal(dbUiJs.includes('data-report="summary"'),true);
+  assert.equal(dbUiJs.includes('data-report="filings"'),true);
+  assert.equal(dbUiJs.includes('data-report="clients"'),true);
+  // Card click triggers preview
+  assert.equal(dbUiJs.includes("e.target.closest('.report-card[data-report]')"),true);
+  // No buttons inside the cards
+  assert.equal(dbUiJs.includes('<div class="reports-grid">'),true);
+  assert.equal(dbUiJs.includes('Save as PDF'),true);
+  assert.equal(dbUiJs.includes('PDF Report'),true);
+  assert.equal(dbUiJs.includes('rows="6"'),true);
+  const styleCss=fs.readFileSync(path.join(root,'style.css'),'utf8');
+  assert.equal(styleCss.includes('cursor:pointer'),true);
+  assert.equal(styleCss.includes('min-height:150px'),true);
+});
+test('Report preview saves PDF directly without triggering print dialog prompt',()=>{
+  const dbUiJs=fs.readFileSync(path.join(root,'database-ui.js'),'utf8');
+  assert.equal(dbUiJs.includes('downloadClientPdf'),true);
+  assert.equal(dbUiJs.includes('window.taxguardDB?.savePdf'),true);
+  assert.equal(dbUiJs.includes('Save as PDF'),true);
+  // Verify preview-save-pdf no longer calls window.print()
+  assert.equal(dbUiJs.includes("m.querySelector('#preview-save-pdf')?.addEventListener('click',()=>window.print())"),false);
+  const preloadCjs=fs.readFileSync(path.join(root,'desktop/preload.cjs'),'utf8');
+  assert.equal(preloadCjs.includes("savePdf:(defaultName)=>ipcRenderer.invoke('report:savePdf',defaultName)"),true);
+  const mainCjs=fs.readFileSync(path.join(root,'desktop/main.cjs'),'utf8');
+  assert.equal(mainCjs.includes("ipcMain.handle('report:savePdf'"),true);
+  assert.equal(mainCjs.includes('printToPDF'),true);
+  assert.equal(mainCjs.includes('dialog.showSaveDialog'),true);
+  // Verify modal is closed after saving
+  assert.equal(dbUiJs.includes("if(res?.saved){\n          notify('Report saved as PDF.');\n          closeModal(m);"),true);
+});
+
+
+
+
