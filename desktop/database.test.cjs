@@ -139,6 +139,23 @@ test('Report preview saves PDF directly without triggering print dialog prompt',
   // Verify modal is closed after saving
   assert.equal(dbUiJs.includes("if(res?.saved){\n          notify('Report saved as PDF.');\n          closeModal(m);"),true);
 });
+test('TaxGuard shield logo is configured as desktop window icon and Windows exe icon',()=>{
+  assert.equal(fs.existsSync(path.join(root,'desktop/icon.ico')),true);
+  assert.equal(fs.existsSync(path.join(root,'desktop/icon.png')),true);
+  assert.equal(fs.statSync(path.join(root,'desktop/icon.ico')).size > 1000, true);
+  assert.equal(fs.statSync(path.join(root,'desktop/icon.png')).size > 1000, true);
+  const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
+  assert.equal(pkg.build?.icon,'desktop/icon.ico');
+  assert.equal(pkg.build?.win?.icon,'desktop/icon.ico');
+  assert.equal(pkg.build?.files?.includes('desktop/**/*'),true);
+  const mainCjs=fs.readFileSync(path.join(root,'desktop/main.cjs'),'utf8');
+  assert.equal(mainCjs.includes('icon:appIconPath')||mainCjs.includes('icon.ico'),true);
+  const indexHtml=fs.readFileSync(path.join(root,'index.html'),'utf8');
+  assert.equal(indexHtml.includes('desktop/icon.png'),true);
+  // Verify default File/Edit/View menu bar is disabled
+  assert.equal(mainCjs.includes('Menu.setApplicationMenu(null)'),true);
+  assert.equal(mainCjs.includes('win.removeMenu()'),true);
+});
 
 
 

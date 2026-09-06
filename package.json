@@ -28,9 +28,13 @@
       "database/schema.sql",
       "database/seed.sql",
       "database/default-forms.json",
-      "database/taxguard.db"
+      "database/taxguard.db",
+      "favicon.ico",
+      "favicon.png"
     ],
+    "icon": "desktop/icon.ico",
     "win": {
+      "icon": "desktop/icon.ico",
       "target": [
         "nsis",
         "portable"

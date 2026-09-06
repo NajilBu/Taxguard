@@ -1,4 +1,4 @@
-const {app,BrowserWindow,ipcMain,dialog}=require('electron');
+const {app,BrowserWindow,ipcMain,dialog,Menu}=require('electron');
 const fs=require('node:fs');
 const path=require('node:path');
 const {pathToFileURL}=require('node:url');
@@ -62,7 +62,10 @@ else app.whenReady().then(async()=>{
     fs.writeFileSync(result.filePath,pdfData);
     return{saved:true,filePath:result.filePath};
   });
-  win=new BrowserWindow({width:1400,height:900,show:!smoke,webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true}});
+  Menu.setApplicationMenu(null);
+  const appIconPath=path.join(__dirname,'icon.ico');
+  win=new BrowserWindow({width:1400,height:900,icon:appIconPath,autoHideMenuBar:true,show:!smoke,webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true}});
+  win.removeMenu();
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
   win.webContents.on('will-navigate',(e,url)=>{if(url!==entry && !url.startsWith('blob:') && !url.startsWith('data:'))e.preventDefault()});
   win.webContents.session.on('will-download',(event,item)=>{
