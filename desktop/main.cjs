@@ -30,6 +30,9 @@ else app.whenReady().then(async()=>{
       let value;
       if(action==='load')value=db.load();
       else if(action==='login')value=db.login(data?.username,data?.password);
+      else if(action==='users:list')value=db.getUsers();
+      else if(action==='users:save')value=db.saveUser(data);
+      else if(action==='users:delete')value=db.deleteUser(data?.id);
       else if(action==='save'||action==='forms'){
         if(!Number.isSafeInteger(revision))throw Error('Reload TaxGuard before saving.');
         value=action==='save'?db.saveState(data,revision):db.saveForms(data,revision);

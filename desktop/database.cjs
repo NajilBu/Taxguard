@@ -43,6 +43,11 @@ class Store {
       this.db.prepare('INSERT OR IGNORE INTO company_login(id,company_name,username,password_hash,is_active) VALUES(1,?,?,?,1)')
         .run('EOO Tax & Accounting','admin',hashPassword('taxguard2026'));
     }
+    const userCount=this.db.prepare('SELECT COUNT(*) n FROM users').get()?.n;
+    if(!userCount){
+      this.db.prepare('INSERT OR IGNORE INTO users(username,company_name,role,password_hash,is_active) VALUES(?,?,?,?,1)')
+        .run('admin','EOO Tax & Accounting','Admin',hashPassword('taxguard2026'));
+    }
   }
   load() {
     const forms=this.db.prepare('SELECT * FROM forms ORDER BY id').all().map(f=>({...JSON.parse(f.schedule_json),id:f.code,name:f.name,frequency:f.frequency}));
@@ -104,13 +109,75 @@ class Store {
     });
     return this.revision();
   }
+  getUsers(){
+    return this.db.prepare('SELECT id, username, company_name, role, is_active, created_at, updated_at FROM users ORDER BY id ASC').all();
+  }
+  saveUser(user){
+    if(!user||typeof user!=='object')throw Error('Invalid user payload.');
+    required(user.username,'Username');
+    const u=user.username.trim();
+    if(!/^[a-zA-Z0-9._ -]+$/.test(u))throw Error('Username must contain only letters, numbers, spaces, dots, dashes, or underscores.');
+    const company=(user.company_name||'EOO Tax & Accounting').trim();
+    const validRoles=['Admin','Staff','Tax Associate','Auditor'];
+    const role=validRoles.includes(user.role)?user.role:'Staff';
+    const active=user.is_active!==undefined?(user.is_active?1:0):1;
+
+    if(user.id){
+      const id=Number(user.id);
+      if(!Number.isSafeInteger(id)||id<=0)throw Error('Invalid user ID.');
+      const existing=this.db.prepare('SELECT * FROM users WHERE id=?').get(id);
+      if(!existing)throw Error('User account not found.');
+      if(active===0){
+        const otherActive=this.db.prepare('SELECT COUNT(*) n FROM users WHERE is_active=1 AND id!=?').get(id)?.n;
+        if(!otherActive)throw Error('Cannot deactivate the only active user account.');
+      }
+      if(user.password&&user.password.trim()){
+        if(user.password.trim().length<6)throw Error('Password must be at least 6 characters.');
+        this.db.prepare("UPDATE users SET company_name=?, role=?, is_active=?, password_hash=?, updated_at=CURRENT_TIMESTAMP WHERE id=?")
+          .run(company,role,active,hashPassword(user.password.trim()),id);
+      }else{
+        this.db.prepare("UPDATE users SET company_name=?, role=?, is_active=?, updated_at=CURRENT_TIMESTAMP WHERE id=?")
+          .run(company,role,active,id);
+      }
+      try{
+        if(existing.username.toLowerCase()==='admin'||id===1){
+          const sql="UPDATE company_login SET company_name=?, is_active=?"+(user.password?.trim()?", password_hash=?":"")+" WHERE id=1";
+          const args=user.password?.trim()?[company,active,hashPassword(user.password.trim())]:[company,active];
+          this.db.prepare(sql).run(...args);
+        }
+      }catch(e){}
+    }else{
+      const duplicate=this.db.prepare('SELECT id FROM users WHERE LOWER(username)=LOWER(?)').get(u);
+      if(duplicate)throw Error('Username already exists.');
+      required(user.password,'Password');
+      if(user.password.trim().length<6)throw Error('Password must be at least 6 characters.');
+      this.db.prepare("INSERT INTO users(username,company_name,role,password_hash,is_active) VALUES(?,?,?,?,?)")
+        .run(u,company,role,hashPassword(user.password.trim()),active);
+    }
+    return this.getUsers();
+  }
+  deleteUser(id){
+    const numId=Number(id);
+    if(!Number.isSafeInteger(numId)||numId<=0)throw Error('Invalid user ID.');
+    const target=this.db.prepare('SELECT id,username,is_active FROM users WHERE id=?').get(numId);
+    if(!target)throw Error('User account not found.');
+    const totalActive=this.db.prepare('SELECT COUNT(*) n FROM users WHERE is_active=1').get()?.n;
+    if(target.is_active===1&&totalActive<=1)throw Error('Cannot delete the only active user account.');
+    this.db.prepare('DELETE FROM users WHERE id=?').run(numId);
+    return this.getUsers();
+  }
   login(username,password){
     required(username,'Username');
     required(password,'Password');
-    const user=this.db.prepare('SELECT id,company_name,username,password_hash,is_active FROM company_login WHERE LOWER(username)=LOWER(?)').get(username.trim());
+    const u=username.trim();
+    let user=this.db.prepare('SELECT id,company_name,username,role,password_hash,is_active FROM users WHERE LOWER(username)=LOWER(?)').get(u);
+    if(!user){
+      const old=this.db.prepare('SELECT id,company_name,username,password_hash,is_active FROM company_login WHERE LOWER(username)=LOWER(?)').get(u);
+      if(old)user={...old,role:'Admin'};
+    }
     if(!user||user.is_active!==1)throw Error('Invalid username or password.');
     if(user.password_hash!==hashPassword(password))throw Error('Invalid username or password.');
-    return {authenticated:true,company:user.company_name,username:user.username};
+    return {authenticated:true,company:user.company_name,username:user.username,role:user.role||'Admin'};
   }
   importWorkspace(data){
     if(this.db.prepare('SELECT COUNT(*) n FROM clients').get().n)throw Error('Import is available only before client records have been added.');

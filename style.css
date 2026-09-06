@@ -113,10 +113,60 @@ dialog.report-modal{width:900px;max-width:96vw;max-height:92vh;overflow-y:auto}
 
 /* --- TaxGuard Login Landing Page Styles --- */
 body.logged-out #login-landing { display: flex; }
-body.logged-out aside, body.logged-out main { display: none !important; }
-body.logged-in #login-landing { display: none !important; }
+body.logged-out:not(.auth-transitioning) aside, body.logged-out:not(.auth-transitioning) main { display: none !important; }
+body.logged-in:not(.auth-transitioning) #login-landing { display: none !important; }
 body.logged-in aside { display: flex; }
 body.logged-in main { display: block; }
+
+body.auth-transitioning {
+  overflow: hidden !important;
+}
+body.auth-transitioning #login-landing {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 1000 !important;
+  display: flex !important;
+  pointer-events: none !important;
+}
+body.auth-transitioning aside {
+  display: flex !important;
+  animation: dashboardAsideIn 0.48s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+body.auth-transitioning main {
+  display: block !important;
+  animation: dashboardMainIn 0.48s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+#login-landing {
+  transition: opacity 0.46s cubic-bezier(0.16, 1, 0.3, 1), transform 0.46s cubic-bezier(0.16, 1, 0.3, 1), filter 0.46s ease;
+  will-change: transform, opacity, filter;
+}
+#login-landing.slide-fade-out {
+  opacity: 0 !important;
+  transform: translateY(-36px) scale(0.985) !important;
+  filter: blur(5px) !important;
+  pointer-events: none !important;
+}
+@keyframes dashboardAsideIn {
+  0% {
+    opacity: 0;
+    transform: translateX(-35px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes dashboardMainIn {
+  0% {
+    opacity: 0;
+    transform: translateY(22px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 
 .login-landing-container {
   min-height: 100vh;
@@ -651,3 +701,88 @@ body.logged-in main { display: block; }
   flex-shrink: 0;
   margin-top: 1px;
 }
+
+/* Floating Notification (#toast) - Top Layer & Modal-Proof Styling */
+#toast, #toast[popover] {
+  position: fixed !important;
+  bottom: 28px !important;
+  right: 28px !important;
+  top: auto !important;
+  left: auto !important;
+  margin: 0 !important;
+  padding: 12px 20px !important;
+  background: #10263e !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-radius: 9px !important;
+  font-family: 'DM Sans', -apple-system, sans-serif !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  line-height: 1.4 !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), 0 4px 12px rgba(0, 0, 0, 0.2) !important;
+  z-index: 2147483647 !important;
+  display: none;
+  align-items: center;
+  gap: 10px;
+  max-width: min(480px, 92vw);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(14px) scale(0.96);
+  transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1), transform 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+#toast::backdrop {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  pointer-events: none !important;
+}
+
+#toast:popover-open,
+#toast.toast-visible {
+  display: flex !important;
+  opacity: 1 !important;
+  transform: translateY(0) scale(1) !important;
+}
+
+#toast .toast-icon {
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  font-weight: 700;
+}
+
+#toast.toast-success .toast-icon {
+  background: #16866b;
+  color: #ffffff;
+}
+
+#toast.toast-error {
+  border-color: rgba(248, 113, 113, 0.45) !important;
+  background: #231218 !important;
+}
+
+#toast.toast-error .toast-icon {
+  background: #c36959;
+  color: #ffffff;
+}
+
+#toast.toast-warning {
+  border-color: rgba(251, 191, 36, 0.45) !important;
+  background: #241d10 !important;
+}
+
+#toast.toast-warning .toast-icon {
+  background: #b58b28;
+  color: #ffffff;
+}
+
+#toast .toast-text {
+  color: #f8fafc;
+  letter-spacing: 0.15px;
+}
+

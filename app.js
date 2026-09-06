@@ -24,10 +24,12 @@ function due(f,p,y){if(f.overrides?.[y]?.[p])return f.overrides[y][p];let i=f.pe
 function key(c,f,p){return `${c.id}:${year}:${f.id}:${p}`}
 function obligations(){return state.clients.flatMap(c=>forms.filter(f=>c.forms.includes(f.id)).flatMap(f=>f.periods.map(p=>{let i=f.periods.indexOf(p),end=p==='Annual'?`${year}-12-31`:p.startsWith('Q')?`${year}-${String((i+1)*3).padStart(2,'0')}-31`:`${year}-${String(i+1).padStart(2,'0')}-31`;return {c,f,p,end,due:due(f,p,year),key:key(c,f,p),filing:state.filings[key(c,f,p)]}}).filter(o=>o.end>=c.start)))}
 if(!database&&!localStorage.getItem('taxguard-workspace-v1')){for(const y of [2024,2025,2026]){year=y;obligations().forEach((o,i)=>{if((y<2026||o.due<'2026-09-01')&&i%5!==0)state.filings[o.key]={date:o.due,reference:`TG-${y}-${String(i+1).padStart(4,'0')}`,remarks:'Sample submission'};})}year=2026;save()}
-function closeModal(m,afterClose){if(m.classList.contains('closing'))return;m.classList.add('closing');setTimeout(()=>{m.close();m.classList.remove('closing');if(afterClose)afterClose()},180)}
+function closeModal(m,afterClose){if(!m)return;if(m.classList.contains('closing')){try{m.close();}catch(e){}m.classList.remove('closing');if(afterClose)afterClose();return;}m.classList.add('closing');setTimeout(()=>{try{m.close();}catch(e){}m.classList.remove('closing');if(afterClose)afterClose();},180)}
 function restoreDatabase(){const saved=database.load();databaseRevision=saved.revision;state={clients:saved.clients,filings:saved.filings};forms.splice(0,forms.length,...saved.forms);}
 function save(){try{if(database)databaseRevision=database.save(state,databaseRevision);else localStorage.setItem('taxguard-workspace-v1',JSON.stringify(state));}catch(error){if(database)restoreDatabase();notify('Not saved: '+error.message);throw error;}}
-function saveForms(){try{if(database)databaseRevision=database.saveForms(forms,databaseRevision);else localStorage.setItem('taxguard-custom-forms',JSON.stringify(forms));}catch(error){if(database)restoreDatabase();notify('Not saved: '+error.message);throw error;}}function notify(t){let e=document.querySelector('#toast');e.textContent=t;e.style.display='block';setTimeout(()=>e.style.display='none',3000)}
+function saveForms(){try{if(database)databaseRevision=database.saveForms(forms,databaseRevision);else localStorage.setItem('taxguard-custom-forms',JSON.stringify(forms));}catch(error){if(database)restoreDatabase();notify('Not saved: '+error.message);throw error;}}
+function notify(t){let e=document.querySelector('#toast');if(!e)return;const isError=/error|fail|cannot|invalid|already exists|not saved/i.test(t),isWarning=/warning|alert|require|must/i.test(t),icon=isError?'⚠️':isWarning?'⚡':'✓';e.innerHTML=`<span class="toast-icon">${icon}</span><span class="toast-text">${esc(t)}</span>`;e.className=isError?'toast-error':isWarning?'toast-warning':'toast-success';if(e._toastTimeout)clearTimeout(e._toastTimeout);if(e._hideTimeout)clearTimeout(e._hideTimeout);const supportsPopover=typeof e.showPopover==='function';if(supportsPopover){try{if(e.matches(':popover-open'))e.hidePopover();}catch(err){}try{e.showPopover();}catch(err){e.style.display='flex';}}else{e.style.display='flex';}requestAnimationFrame(()=>{e.classList.add('toast-visible');});e._toastTimeout=setTimeout(()=>{e.classList.remove('toast-visible');e._hideTimeout=setTimeout(()=>{if(supportsPopover){try{e.hidePopover();}catch(err){}}e.style.display='none';},220);},3200);}
+const modalEl=document.querySelector('#modal');if(modalEl){const origShowModal=modalEl.showModal.bind(modalEl);modalEl.showModal=function(){origShowModal();const toast=document.querySelector('#toast');if(toast&&typeof toast.showPopover==='function'&&toast.classList.contains('toast-visible')){try{toast.hidePopover();toast.showPopover();}catch(e){}}};}
 const badge=s=>`<span class="badge ${s.toLowerCase().replaceAll(' ','-')}">${esc(s)}</span>`;const clientCell=c=>`<div class="client-cell"><span class="client-icon">${esc(c.name.split(' ').slice(0,2).map(x=>x[0]).join(''))}</span><div><strong>${esc(c.name)}</strong><small>${esc(c.type)}</small></div></div>`;
 function yearSelect(){return `<select aria-label="Tax year" id="year">${Array.from({length:10},(_,i)=>2027-i).map(y=>`<option ${y===year?'selected':''}>${y}</option>`).join('')}</select>`}
 function heading(title,desc,action=''){const deadlineButton=title==='Deadline reference'?'<button class="btn primary" id="add-deadline">＋ Add deadline</button>':'';return `<div class="page-title"><div><div class="eyebrow">YOUR COMPLIANCE WORKSPACE</div><h1>${title}</h1><p>${desc}</p></div><div class="controls">${yearSelect()}${action}${deadlineButton}</div></div>`}
@@ -79,7 +81,7 @@ render();
 const originalDeadlines=deadlines;
 deadlines=function(){return heading('Deadline reference','A shared reference for forms, covered periods, and filing schedules.')+`<div class="deadline-note">Filing schedules from the supplied workbook. These are not verified current BIR deadlines. Holiday adjustments, filing-channel exceptions, and fiscal-year variations are not applied.</div><div class="deadline-grid">${forms.map(f=>`<button class="deadline-card" data-deadline="${f.id}"><div class="card-code">${f.id}</div><h2>${esc(f.name)}</h2><div class="card-meta"><span>${f.frequency||(f.periods[0]==='Annual'?'Annual':f.id==='1601-C'?'Monthly':'Quarterly')}</span><span>${f.periods.length} periods</span></div><div class="card-periods">${f.periods.slice(0,5).join(' · ')}${f.periods.length>5?' · …':''}</div><span class="card-link">View schedule →</span></button>`).join('')}</div>`};
 const originalBind=bind;
-bind=function(){originalBind();document.querySelectorAll('.client-row').forEach(r=>r.onclick=e=>{if(e.target.closest('.client-edit-inline'))return;clientModal(+r.dataset.client)});document.querySelectorAll('.recent-client-row').forEach(r=>r.onclick=()=>{query=state.clients.find(c=>c.id===+r.dataset.client)?.name||'';page='clients';render();clientModal(+r.dataset.client)});document.querySelectorAll('[data-deadline]').forEach(b=>b.onclick=()=>deadlineModal(b.dataset.deadline));const form=document.querySelector('#client-form');if(form&&form.querySelector){const checks=form.querySelector('.checks');if(checks){const labels=[...checks.querySelectorAll('label')];const button=document.createElement('button');button.type='button';button.className='form-picker-btn';button.textContent='Select required forms';const pills=document.createElement('div');pills.className='selected-pills';const popup=document.createElement('div');popup.className='form-picker-popup';popup.innerHTML='<div class="picker-head"><strong>Select required forms</strong><button type="button" class="picker-close">×</button></div><div class="picker-options"></div><button type="button" class="btn primary picker-done">Done</button>';const options=popup.querySelector('.picker-options');labels.forEach(label=>options.appendChild(label.cloneNode(true)));const update=()=>{pills.innerHTML='';labels.forEach((label,i)=>{if(label.querySelector('input').checked){const pill=document.createElement('span');pill.className='form-pill';pill.textContent=label.textContent.trim();const x=document.createElement('button');x.type='button';x.textContent='×';x.onclick=()=>{label.querySelector('input').checked=false;options.querySelectorAll('input')[i].checked=false;update()};pill.appendChild(x);pills.appendChild(pill)}})};button.onclick=()=>popup.classList.add('open');popup.querySelector('.picker-close').onclick=()=>popup.classList.remove('open');popup.querySelector('.picker-done').onclick=()=>{options.querySelectorAll('input').forEach((input,i)=>labels[i].querySelector('input').checked=input.checked);update();popup.classList.remove('open')};checks.style.display='none';checks.before(button,pills);document.body.appendChild(popup);update()}const tinInput=form.querySelector('[name="tin"]');if(tinInput){tinInput.inputMode='numeric';tinInput.maxLength=15;tinInput.oninput=()=>{const digits=tinInput.value.replace(/\D/g,'').slice(0,12);tinInput.value=digits.replace(/(\d{3})(?=\d)/g,'$1-')}}const previous=form.onsubmit;form.onsubmit=function(e){const d=new FormData(form),tin=String(d.get('tin')||'').trim(),start=String(d.get('start')||''),selected=d.getAll('forms');let error='';if(!/^\d{3}-\d{3}-\d{3}-\d{3}$/.test(tin))error='TIN must use the format 000-000-000-000.';else if(state.clients.some(c=>c.tin===tin&&c.name!==d.get('name')))error='This TIN is already registered.';else if(!selected.length)error='Select at least one required form.';else if(start>today)error='Start of filing cannot be after today.';if(error){e.preventDefault();notify(error);return false}return previous.call(this,e)}}};
+bind=function(){originalBind();document.querySelectorAll('.client-row').forEach(r=>r.onclick=e=>{if(e.target.closest('.client-edit-inline'))return;clientModal(+r.dataset.client)});document.querySelectorAll('.recent-client-row').forEach(r=>r.onclick=()=>{query=state.clients.find(c=>c.id===+r.dataset.client)?.name||'';page='clients';render();clientModal(+r.dataset.client)});document.querySelectorAll('[data-deadline]').forEach(b=>b.onclick=()=>deadlineModal(b.dataset.deadline));const form=document.querySelector('#client-form');if(form&&form.querySelector){const checks=form.querySelector('.checks');if(checks){const labels=[...checks.querySelectorAll('label')];const button=document.createElement('button');button.type='button';button.className='form-picker-btn';button.textContent='Select required forms';const pills=document.createElement('div');pills.className='selected-pills';const popup=document.createElement('div');popup.className='form-picker-popup';popup.innerHTML='<div class="picker-head"><strong>Select required forms</strong><button type="button" class="picker-close">×</button></div><div class="picker-options"></div><button type="button" class="btn primary picker-done">Done</button>';const options=popup.querySelector('.picker-options');labels.forEach(label=>options.appendChild(label.cloneNode(true)));const update=()=>{pills.innerHTML='';labels.forEach((label,i)=>{if(label.querySelector('input').checked){const pill=document.createElement('span');pill.className='form-pill';pill.textContent=label.textContent.trim();const x=document.createElement('button');x.type='button';x.textContent='×';x.onclick=()=>{label.querySelector('input').checked=false;options.querySelectorAll('input')[i].checked=false;update()};pill.appendChild(x);pills.appendChild(pill)}})};button.onclick=()=>popup.classList.add('open');popup.querySelector('.picker-close').onclick=()=>popup.classList.remove('open');popup.querySelector('.picker-done').onclick=()=>{options.querySelectorAll('input').forEach((input,i)=>labels[i].querySelector('input').checked=input.checked);update();popup.classList.remove('open')};checks.style.display='none';checks.before(button,pills);const mDialog=document.querySelector('#modal');(mDialog?.open?mDialog:document.body).appendChild(popup);update()}const tinInput=form.querySelector('[name="tin"]');if(tinInput){tinInput.inputMode='numeric';tinInput.maxLength=15;tinInput.oninput=()=>{const digits=tinInput.value.replace(/\D/g,'').slice(0,12);tinInput.value=digits.replace(/(\d{3})(?=\d)/g,'$1-')}}const previous=form.onsubmit;form.onsubmit=function(e){const d=new FormData(form),tin=String(d.get('tin')||'').trim(),start=String(d.get('start')||''),selected=d.getAll('forms');let error='';if(!/^\d{3}-\d{3}-\d{3}-\d{3}$/.test(tin))error='TIN must use the format 000-000-000-000.';else if(state.clients.some(c=>c.tin===tin&&c.name!==d.get('name')))error='This TIN is already registered.';else if(!selected.length)error='Select at least one required form.';else if(start>today)error='Start of filing cannot be after today.';if(error){e.preventDefault();notify(error);return false}return previous.call(this,e)}}};
 function deadlineModal(id){let f=forms.find(x=>x.id===id),m=document.querySelector('#modal');m.innerHTML=`<h2>${f.id}</h2><p>${esc(f.name)}</p><div class="modal-schedule">${f.periods.map(p=>`<div><strong>${p}</strong><span>${due(f,p,year)}</span></div>`).join('')}</div><div class="modal-actions"><button class="btn primary" id="close-deadline">Close</button></div>`;m.showModal();document.querySelector('#close-deadline').onclick=()=>closeModal(m)}
 render();
 
@@ -202,17 +204,53 @@ function getStoredAuth(){
     return s?JSON.parse(s):null;
   }catch{return null;}
 }
-function setAuthState(loggedIn,authInfo){
+function getUserInitials(name){
+  if(!name)return 'TG';
+  const str=String(name).trim();
+  const parts=str.split(/[\s._-]+/).filter(Boolean);
+  if(parts.length>=2){
+    if(parts[0].length>=2&&/^[A-Z]+$/.test(parts[0])){
+      return parts[0].slice(0,2);
+    }
+    return (parts[0][0]+parts[1][0]).toUpperCase();
+  }
+  const uppers=str.match(/[A-Z]/g);
+  if(uppers&&uppers.length>=2){
+    return (uppers[0]+uppers[1]).toUpperCase();
+  }
+  return str.slice(0,2).toUpperCase();
+}
+function setAuthState(loggedIn,authInfo,animate=false){
   if(loggedIn){
-    document.body.classList.remove('logged-out');
-    document.body.classList.add('logged-in');
     const comp=authInfo?.company||'EOO Tax & Accounting';
     const firmEl=document.querySelector('.firm .firm-info');
     if(firmEl)firmEl.innerHTML=`${esc(comp)}<small>Compliance team</small>`;
     const loginDisplay=document.querySelector('#login-company-display');
     if(loginDisplay)loginDisplay.textContent=comp;
     const headerAvatar=document.querySelector('.header-right .avatar');
-    if(headerAvatar&&authInfo?.username)headerAvatar.title=`Signed in as ${esc(authInfo.username)}`;
+    if(headerAvatar&&authInfo?.username){
+      headerAvatar.title=`Signed in as ${esc(authInfo.username)}`;
+      headerAvatar.textContent=getUserInitials(authInfo.username);
+    }
+    const firmAvatar=document.querySelector('.firm .avatar');
+    if(firmAvatar&&comp){
+      firmAvatar.textContent=getUserInitials(comp);
+    }
+
+    if(animate){
+      const landing=document.querySelector('#login-landing');
+      document.body.classList.add('auth-transitioning');
+      document.body.classList.add('logged-in');
+      landing?.classList.add('slide-fade-out');
+      setTimeout(()=>{
+        document.body.classList.remove('logged-out');
+        document.body.classList.remove('auth-transitioning');
+        landing?.classList.remove('slide-fade-out');
+      },480);
+    }else{
+      document.body.classList.remove('logged-out');
+      document.body.classList.add('logged-in');
+    }
   }else{
     document.body.classList.remove('logged-in');
     document.body.classList.add('logged-out');
@@ -238,8 +276,17 @@ function attemptLogin(username,password){
     if(database&&typeof database.login==='function'){
       result=database.login(username.trim(),password);
     }else{
-      if(username.trim().toLowerCase()==='admin'&&password==='taxguard2026'){
-        result={authenticated:true,company:'EOO Tax & Accounting',username:'admin'};
+      let usersList=[];
+      try{usersList=JSON.parse(localStorage.getItem('taxguard_users')||'[]');}catch(e){}
+      const match=usersList.find(u=>u.username.toLowerCase()===username.trim().toLowerCase());
+      if(match){
+        if(match.password===password&&match.is_active!==0){
+          result={authenticated:true,company:match.company_name||'EOO Tax & Accounting',username:match.username,role:match.role||'Staff'};
+        }else{
+          throw Error('Invalid username or password.');
+        }
+      }else if(username.trim().toLowerCase()==='admin'&&password==='taxguard2026'){
+        result={authenticated:true,company:'EOO Tax & Accounting',username:'admin',role:'Admin'};
       }else{
         throw Error('Invalid username or password.');
       }
@@ -248,7 +295,7 @@ function attemptLogin(username,password){
       const dataStr=JSON.stringify(result);
       sessionStorage.setItem('taxguard_auth',dataStr);
       localStorage.removeItem('taxguard_auth');
-      setAuthState(true,result);
+      setAuthState(true,result,true);
       notify(`Welcome back, ${result.username}!`);
       render();
     }else{

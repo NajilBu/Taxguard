@@ -25,10 +25,7 @@
       "browser-database.js",
       "database-ui.js",
       "desktop/**/*",
-      "database/schema.sql",
-      "database/seed.sql",
-      "database/default-forms.json",
-      "database/taxguard.db",
+      "database/**/*",
       "favicon.ico",
       "favicon.png"
     ],
@@ -42,7 +39,11 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName} Setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}.${ext}"
     }
   },
   "devDependencies": {

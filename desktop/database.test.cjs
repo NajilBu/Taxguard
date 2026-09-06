@@ -65,6 +65,13 @@ test('Landing page contains no sqlite references and enforces session-only sign 
   const appJs=fs.readFileSync(path.join(root,'app.js'),'utf8');
   assert.equal(appJs.includes("localStorage.removeItem('taxguard_auth')"),true);
   assert.equal(appJs.includes("sessionStorage.getItem('taxguard_auth')"),true);
+  assert.equal(appJs.includes('auth-transitioning'),true);
+  assert.equal(appJs.includes('slide-fade-out'),true);
+  const styleCss=fs.readFileSync(path.join(root,'style.css'),'utf8');
+  assert.equal(styleCss.includes('.slide-fade-out'),true);
+  assert.equal(styleCss.includes('body.auth-transitioning'),true);
+  assert.equal(styleCss.includes('dashboardAsideIn'),true);
+  assert.equal(styleCss.includes('dashboardMainIn'),true);
 });
 test('clientModal renders client compliance progress and obligations breakdown',()=>{
   const appJs=fs.readFileSync(path.join(root,'app.js'),'utf8');
@@ -156,7 +163,125 @@ test('TaxGuard shield logo is configured as desktop window icon and Windows exe 
   assert.equal(mainCjs.includes('Menu.setApplicationMenu(null)'),true);
   assert.equal(mainCjs.includes('win.removeMenu()'),true);
 });
+test('User account management: create new users, edit current user, safeguards, and multi-user login',()=>{
+  const {file}=fixture();
+  const s=new Store(file,root);
+  const initialUsers=s.getUsers();
+  assert.equal(initialUsers.length >= 1, true);
+  const adminUser=initialUsers.find(u=>u.username.toLowerCase()==='admin');
+  assert.ok(adminUser);
+  assert.equal(adminUser.role, 'Admin');
+  assert.equal('password_hash' in adminUser, false);
 
+  // Edit current admin user info (company name, role)
+  s.saveUser({
+    id: adminUser.id,
+    username: adminUser.username,
+    company_name: 'TaxGuard Senior Associates',
+    role: 'Admin',
+    is_active: 1
+  });
+  const updatedAdmin=s.getUsers().find(u=>u.id===adminUser.id);
+  assert.equal(updatedAdmin.company_name, 'TaxGuard Senior Associates');
 
+  // Create new user account
+  s.saveUser({
+    username: 'jdelacruz',
+    company_name: 'TaxGuard Senior Associates',
+    role: 'Tax Associate',
+    password: 'password123',
+    is_active: 1
+  });
+  const usersAfterAdd=s.getUsers();
+  const newStaff=usersAfterAdd.find(u=>u.username==='jdelacruz');
+  assert.ok(newStaff);
+  assert.equal(newStaff.role, 'Tax Associate');
+  assert.equal(newStaff.is_active, 1);
 
+  // Authenticate with the newly created user
+  const loginRes=s.login('jdelacruz', 'password123');
+  assert.equal(loginRes.authenticated, true);
+  assert.equal(loginRes.username, 'jdelacruz');
+  assert.equal(loginRes.role, 'Tax Associate');
 
+  // Update new user password and role
+  s.saveUser({
+    id: newStaff.id,
+    username: newStaff.username,
+    company_name: newStaff.company_name,
+    role: 'Auditor',
+    password: 'newsecretpass',
+    is_active: 1
+  });
+  assert.equal(s.login('jdelacruz', 'newsecretpass').role, 'Auditor');
+  assert.throws(()=>s.login('jdelacruz', 'password123'), /Invalid username or password/);
+
+  // Validations: duplicate username, short password
+  assert.throws(()=>s.saveUser({ username: 'jdelacruz', password: 'password123' }), /Username already exists/);
+  assert.throws(()=>s.saveUser({ username: 'newuser', password: '123' }), /Password must be at least 6 characters/);
+
+  // Safeguards: cannot delete only active account
+  s.deleteUser(newStaff.id);
+  assert.equal(s.getUsers().some(u=>u.id===newStaff.id), false);
+  assert.throws(()=>s.deleteUser(adminUser.id), /Cannot delete the only active user account/);
+
+  // UI elements verified in database-ui.js
+  const dbUiJs=fs.readFileSync(path.join(root,'database-ui.js'),'utf8');
+  assert.equal(dbUiJs.includes('User Account Management'), true);
+  assert.equal(dbUiJs.includes('openUserAccountModal'), true);
+  assert.equal(dbUiJs.includes('btn-add-user'), true);
+  assert.equal(dbUiJs.includes('btn-edit-user'), true);
+
+  s.close();
+});
+
+test('Floating notifications render in Top Layer above modal backdrops and user account modal dismisses', ()=>{
+  const indexHtml = fs.readFileSync(path.join(root,'index.html'),'utf8');
+  const styleCss = fs.readFileSync(path.join(root,'style.css'),'utf8');
+  const appJs = fs.readFileSync(path.join(root,'app.js'),'utf8');
+  const dbUiJs = fs.readFileSync(path.join(root,'database-ui.js'),'utf8');
+
+  // Top Layer Popover setup in index.html
+  assert.equal(indexHtml.includes('id="toast" role="status" popover="manual"'), true);
+
+  // CSS Top Layer and Backdrop rules
+  assert.equal(styleCss.includes('#toast, #toast[popover]'), true);
+  assert.equal(styleCss.includes('z-index: 2147483647 !important'), true);
+  assert.equal(styleCss.includes('#toast::backdrop'), true);
+  assert.equal(styleCss.includes('#toast:popover-open'), true);
+  assert.equal(styleCss.includes('toast-error'), true);
+  assert.equal(styleCss.includes('toast-success'), true);
+
+  // app.js popover promotion and modal dismissal
+  assert.equal(appJs.includes('supportsPopover=typeof e.showPopover===\'function\''), true);
+  assert.equal(appJs.includes('e.showPopover()'), true);
+  assert.equal(appJs.includes('toast-visible'), true);
+  assert.equal(appJs.includes('modalEl.showModal'), true);
+
+  // database-ui.js user account modal dismissal, error alerts, show password toggle, and confirmation window
+  assert.equal(dbUiJs.includes('user-modal-error-alert'), true);
+  assert.equal(dbUiJs.includes('toggle-user-password'), true);
+  assert.equal(dbUiJs.includes('confirmCreateUser'), true);
+  assert.equal(dbUiJs.includes('btn-confirm-create-user'), true);
+  assert.equal(dbUiJs.includes('closeModal(m,()=>{'), true);
+  assert.equal(dbUiJs.includes('notify(\'New user account created.\');'), true);
+});
+
+test('Avatar initials resolve dynamically from username and firm (e.g. FeviRuth -> FR)', ()=>{
+  const appJs = fs.readFileSync(path.join(root,'app.js'),'utf8');
+  assert.equal(appJs.includes('function getUserInitials(name){'), true);
+  assert.equal(appJs.includes('headerAvatar.textContent=getUserInitials(authInfo.username);'), true);
+
+  // Evaluate the getUserInitials function logic
+  const vm = require('vm');
+  const sandbox = {};
+  vm.createContext(sandbox);
+  vm.runInContext(appJs.slice(appJs.indexOf('function getUserInitials(name){'), appJs.indexOf('function setAuthState(')), sandbox);
+
+  assert.equal(sandbox.getUserInitials('FeviRuth'), 'FR');
+  assert.equal(sandbox.getUserInitials('Fevi Ruth'), 'FR');
+  assert.equal(sandbox.getUserInitials('fevi_ruth'), 'FR');
+  assert.equal(sandbox.getUserInitials('admin'), 'AD');
+  assert.equal(sandbox.getUserInitials('John Doe'), 'JD');
+  assert.equal(sandbox.getUserInitials('EOO Tax & Accounting'), 'EO');
+});

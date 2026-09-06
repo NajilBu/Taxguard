@@ -6,8 +6,11 @@ const {scheduleDate}=require('./database.cjs');
 function seedSamples(store,root){
   store.transaction(()=>{
     if(store.db.prepare("SELECT value FROM workspace_meta WHERE key='sample-seed-v1'").get())return;
-    const saved=store.load(), samples=JSON.parse(fs.readFileSync(path.join(root,'database/sample-clients.json'),'utf8'));
-    const defaults=JSON.parse(fs.readFileSync(path.join(root,'database/default-forms.json'),'utf8'));
+    const samplePath=path.join(root,'database/sample-clients.json');
+    const defaultFormsPath=path.join(root,'database/default-forms.json');
+    if(!fs.existsSync(samplePath)||!fs.existsSync(defaultFormsPath))return;
+    const saved=store.load(), samples=JSON.parse(fs.readFileSync(samplePath,'utf8'));
+    const defaults=JSON.parse(fs.readFileSync(defaultFormsPath,'utf8'));
     let next=Math.max(0,...saved.clients.map(c=>c.id))+1;
     const ids=new Map();
     for(const c of samples){

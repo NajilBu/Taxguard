@@ -651,16 +651,409 @@ function openReportPreview(reportType,reportYear){
 }
 
 
+function getCurrentUserAuth(){
+  try{
+    const s=sessionStorage.getItem('taxguard_auth');
+    return s?JSON.parse(s):{username:'admin',company:'EOO Tax & Accounting',role:'Admin'};
+  }catch{
+    return {username:'admin',company:'EOO Tax & Accounting',role:'Admin'};
+  }
+}
+
+function fetchWorkstationUsers(){
+  if(window.taxguardDB?.getUsers){
+    try{const res=window.taxguardDB.getUsers();if(Array.isArray(res))return res;}catch(e){}
+  }
+  try{
+    const stored=localStorage.getItem('taxguard_users');
+    if(stored)return JSON.parse(stored);
+  }catch(e){}
+  return [{id:1,username:'admin',company_name:'EOO Tax & Accounting',role:'Admin',is_active:1,created_at:'2026-01-01'}];
+}
+
+function persistWorkstationUser(userData){
+  if(window.taxguardDB?.saveUser){
+    return window.taxguardDB.saveUser(userData);
+  }
+  let users=fetchWorkstationUsers();
+  if(userData.id){
+    const idx=users.findIndex(u=>u.id===Number(userData.id));
+    if(idx>=0){
+      users[idx]={
+        ...users[idx],
+        company_name:userData.company_name||users[idx].company_name,
+        role:userData.role||users[idx].role,
+        is_active:userData.is_active!==undefined?(userData.is_active?1:0):users[idx].is_active,
+        updated_at:new Date().toISOString()
+      };
+      if(userData.password) users[idx].password=userData.password;
+    }
+  }else{
+    if(users.some(u=>u.username.toLowerCase()===userData.username.toLowerCase()))throw Error('Username already exists.');
+    users.push({
+      id:Date.now(),
+      username:userData.username,
+      company_name:userData.company_name||'EOO Tax & Accounting',
+      role:userData.role||'Staff',
+      password:userData.password,
+      is_active:userData.is_active!==undefined?(userData.is_active?1:0):1,
+      created_at:new Date().toISOString()
+    });
+  }
+  localStorage.setItem('taxguard_users',JSON.stringify(users));
+  return users;
+}
+
+function deleteWorkstationUser(id){
+  if(window.taxguardDB?.deleteUser){
+    return window.taxguardDB.deleteUser(id);
+  }
+  let users=fetchWorkstationUsers();
+  users=users.filter(u=>u.id!==Number(id));
+  localStorage.setItem('taxguard_users',JSON.stringify(users));
+  return users;
+}
+
+function openUserAccountModal(userId,initialData=null){
+  const users=fetchWorkstationUsers();
+  const currentAuth=getCurrentUserAuth();
+  const user=userId?users.find(u=>u.id===Number(userId)):null;
+  const isEditing=!!user;
+  const isCurrent=isEditing&&user.username.toLowerCase()===currentAuth.username.toLowerCase();
+  const m=document.querySelector('#modal');
+  if(!m)return;
+
+  const totalActive=users.filter(u=>u.is_active).length;
+  const cannotDeactivate=isEditing&&user.is_active&&totalActive<=1;
+
+  const usernameVal=initialData?.username!==undefined?initialData.username:(user?.username||'');
+  const companyVal=initialData?.company_name!==undefined?initialData.company_name:(user?.company_name||'EOO Tax & Accounting');
+  const roleVal=initialData?.role!==undefined?initialData.role:(user?.role||'Staff');
+  const isActiveVal=initialData?.is_active!==undefined?initialData.is_active:((!user||user.is_active)?1:0);
+  const passwordVal=initialData?.password!==undefined?initialData.password:'';
+
+  m.innerHTML=`
+    <h2>${isEditing?(isCurrent?'Edit Your Account Info':'Edit User Account'):'Add New User Account'}</h2>
+    <p>${isEditing?'Update workstation identity, display name, role, or change password.':'Create new login credentials for staff or tax associates.'}</p>
+    <form id="user-account-form" style="margin-top:16px">
+      <label for="user-input-username">Username</label>
+      <input id="user-input-username" name="username" required ${isEditing?'readonly':''} value="${esc(usernameVal)}" placeholder="e.g. jdelacruz" pattern="^[a-zA-Z0-9._ -]+$" title="Letters, numbers, spaces, dots, dashes, or underscores only" style="${isEditing?'background:#f1f5f9;cursor:not-allowed':''}">
+      ${isEditing?'':'<small style="display:block;color:#64748b;font-size:11px;margin-top:3px">Login username (letters, numbers, spaces, dots, dashes, underscores)</small>'}
+
+      <label for="user-input-company">Display / Firm Name</label>
+      <input id="user-input-company" name="company_name" required value="${esc(companyVal)}" placeholder="Firm or team display name">
+
+      <div class="form-grid">
+        <div>
+          <label for="user-input-role">Workstation Role</label>
+          <select id="user-input-role" name="role">
+            <option value="Admin" ${roleVal==='Admin'?'selected':''}>Admin</option>
+            <option value="Staff" ${roleVal==='Staff'?'selected':''}>Staff</option>
+            <option value="Tax Associate" ${roleVal==='Tax Associate'?'selected':''}>Tax Associate</option>
+            <option value="Auditor" ${roleVal==='Auditor'?'selected':''}>Auditor</option>
+          </select>
+        </div>
+        <div>
+          <label for="user-input-status">Account Standing</label>
+          <div style="padding:10px 0">
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:${cannotDeactivate?'not-allowed':'pointer'};margin:0">
+              <input type="checkbox" name="is_active" ${isActiveVal?'checked':''} ${cannotDeactivate?'disabled':''} style="width:auto">
+              <span>Active Account</span>
+            </label>
+            ${cannotDeactivate?'<small style="color:#c36959;display:block;font-size:10px;margin-top:4px">Cannot deactivate only active user</small>':''}
+          </div>
+        </div>
+      </div>
+
+      <label for="user-input-password">${isEditing?'Change Password (leave blank to keep current)':'Account Password'}</label>
+      <div class="input-with-icon" style="position:relative;display:flex;align-items:center">
+        <span class="input-icon" style="position:absolute;left:13px;font-size:13px;color:#8899aa;pointer-events:none;user-select:none">🔒</span>
+        <input id="user-input-password" type="password" name="password" ${isEditing?'':'required'} minlength="6" value="${esc(passwordVal)}" placeholder="${isEditing?'Enter new password to change':'At least 6 characters'}" style="padding-left:36px;padding-right:42px;width:100%">
+        <button type="button" id="toggle-user-password" class="pw-toggle-btn" title="Show password" aria-label="Show password" style="position:absolute;right:8px;background:none;border:0;cursor:pointer;font-size:15px;color:#64748b;padding:4px 6px;line-height:1">👁</button>
+      </div>
+
+      <div id="user-modal-error-alert" style="display:none;background:#fff0ee;border:1px solid #fed7d7;color:#c36959;padding:9px 13px;border-radius:6px;font-size:12px;margin-top:14px"></div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn" id="cancel-user-modal">Cancel</button>
+        <button type="submit" class="btn primary" id="save-user-btn">${isEditing?'Save changes':'Create account'}</button>
+      </div>
+    </form>
+  `;
+
+  m.classList.remove('closing');
+  m.showModal();
+
+  const pwInput = m.querySelector('#user-input-password');
+  const pwToggle = m.querySelector('#toggle-user-password');
+  if(pwInput && pwToggle){
+    pwToggle.addEventListener('click', () => {
+      const isPw = pwInput.type === 'password';
+      pwInput.type = isPw ? 'text' : 'password';
+      pwToggle.textContent = isPw ? '🙈' : '👁';
+      pwToggle.title = isPw ? 'Hide password' : 'Show password';
+      pwToggle.setAttribute('aria-label', isPw ? 'Hide password' : 'Show password');
+    });
+  }
+
+  m.querySelector('#cancel-user-modal')?.addEventListener('click',()=>{
+    closeModal(m,()=>{m.innerHTML='';});
+    try{m.close();}catch(e){}
+    m.classList.remove('closing');
+    m.innerHTML='';
+  });
+  m.querySelector('#user-account-form')?.addEventListener('submit',e=>{
+    e.preventDefault();
+    const errorAlert=m.querySelector('#user-modal-error-alert');
+    if(errorAlert) errorAlert.style.display='none';
+    const fd=new FormData(e.target);
+    const username=String(fd.get('username')||'').trim();
+    const company_name=String(fd.get('company_name')||'').trim();
+    const role=String(fd.get('role')||'Staff');
+    const is_active=cannotDeactivate?1:(fd.get('is_active')!==null?1:0);
+    const password=String(fd.get('password')||'');
+
+    const accountData={
+      id:user?.id,
+      username,
+      company_name,
+      role,
+      is_active,
+      password:password.trim()||undefined
+    };
+
+    if(!isEditing){
+      if(!username){
+        if(errorAlert){errorAlert.textContent='Username is required.';errorAlert.style.display='block';}
+        notify('Error: Username is required.');
+        return;
+      }
+      if(!/^[a-zA-Z0-9._ -]+$/.test(username)){
+        if(errorAlert){errorAlert.textContent='Username must contain only letters, numbers, spaces, dots, dashes, or underscores.';errorAlert.style.display='block';}
+        notify('Error: Username must contain only letters, numbers, spaces, dots, dashes, or underscores.');
+        return;
+      }
+      if(users.some(u=>u.username.toLowerCase()===username.toLowerCase())){
+        if(errorAlert){errorAlert.textContent='Username already exists.';errorAlert.style.display='block';}
+        notify('Error: Username already exists.');
+        return;
+      }
+      if(!password||password.trim().length<6){
+        if(errorAlert){errorAlert.textContent='Password must be at least 6 characters.';errorAlert.style.display='block';}
+        notify('Error: Password must be at least 6 characters.');
+        return;
+      }
+
+      confirmCreateUser(accountData,()=>{
+        openUserAccountModal(null,accountData);
+      });
+      return;
+    }
+
+    try{
+      persistWorkstationUser(accountData);
+
+      if(isCurrent||(!isEditing&&user?.username===currentAuth.username)){
+        const updatedAuth={...currentAuth,company:company_name,role};
+        sessionStorage.setItem('taxguard_auth',JSON.stringify(updatedAuth));
+        const firmEl=document.querySelector('.firm .firm-info');
+        if(firmEl) firmEl.innerHTML=`${esc(company_name)}<small>Compliance team</small>`;
+        const loginDisplay=document.querySelector('#login-company-display');
+        if(loginDisplay) loginDisplay.textContent=company_name;
+        const headerAvatar=document.querySelector('.header-right .avatar');
+        if(headerAvatar){
+          headerAvatar.title=`Signed in as ${esc(updatedAuth.username)}`;
+          headerAvatar.textContent=getUserInitials(updatedAuth.username);
+        }
+        const firmAvatar=document.querySelector('.firm .avatar');
+        if(firmAvatar&&company_name){
+          firmAvatar.textContent=getUserInitials(company_name);
+        }
+      }
+
+      closeModal(m,()=>{
+        m.innerHTML='';
+      });
+      try{m.close();}catch(err){}
+      m.classList.remove('closing');
+      m.innerHTML='';
+      render();
+      notify('User account updated successfully.');
+    }catch(err){
+      if(errorAlert){
+        errorAlert.textContent=err.message||'Could not save user account.';
+        errorAlert.style.display='block';
+      }
+      notify('Error: '+err.message);
+    }
+  });
+}
+
+function confirmCreateUser(userData,onBack){
+  const m=document.querySelector('#modal');
+  if(!m)return;
+  m.innerHTML=`
+    <h2>Confirm New User Account</h2>
+    <p>Please review and confirm the account details before adding this user to the workstation.</p>
+    
+    <div style="background:#f8fafc;border:1px solid var(--line);border-radius:9px;padding:16px 20px;margin:18px 0;display:grid;gap:11px">
+      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #edf2f7;padding-bottom:9px">
+        <span style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.5px">Login Username</span>
+        <strong style="font-size:13px;color:#1e293b">${esc(userData.username)}</strong>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #edf2f7;padding-bottom:9px">
+        <span style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.5px">Display / Firm Name</span>
+        <strong style="font-size:13px;color:#1e293b">${esc(userData.company_name)}</strong>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #edf2f7;padding-bottom:9px">
+        <span style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.5px">Workstation Role</span>
+        <span class="badge" style="background:#e8f4fd;color:#2766db;font-weight:700">${esc(userData.role)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.5px">Account Status</span>
+        <span class="badge ${userData.is_active?'active':'inactive'}">${userData.is_active?'Active':'Inactive'}</span>
+      </div>
+    </div>
+
+    <div id="confirm-create-error-alert" style="display:none;background:#fff0ee;border:1px solid #fed7d7;color:#c36959;padding:9px 13px;border-radius:6px;font-size:12px;margin-bottom:16px"></div>
+
+    <p style="font-size:12px;color:#64748b;margin:0 0 16px;line-height:1.5">Are you sure you want to create this account? This user will be authorized to access the TaxGuard workstation.</p>
+
+    <div class="modal-actions">
+      <button type="button" class="btn" id="btn-back-create-user">← Back to edit</button>
+      <button type="button" class="btn primary" id="btn-confirm-create-user">Confirm &amp; create account</button>
+    </div>
+  `;
+
+  m.classList.remove('closing');
+  m.showModal();
+
+  m.querySelector('#btn-back-create-user')?.addEventListener('click',()=>{
+    if(onBack) onBack();
+  });
+
+  m.querySelector('#btn-confirm-create-user')?.addEventListener('click',()=>{
+    const confirmAlert=m.querySelector('#confirm-create-error-alert');
+    try{
+      persistWorkstationUser(userData);
+      closeModal(m,()=>{
+        m.innerHTML='';
+      });
+      try{m.close();}catch(e){}
+      m.classList.remove('closing');
+      m.innerHTML='';
+      render();
+      notify('New user account created.');
+    }catch(err){
+      if(confirmAlert){
+        confirmAlert.textContent=err.message||'Could not create user account.';
+        confirmAlert.style.display='block';
+      }
+      notify('Error: '+err.message);
+    }
+  });
+}
+
+function confirmDeleteUser(userId,username){
+  const m=document.querySelector('#modal');
+  if(!m)return;
+  m.innerHTML=`
+    <h2>Delete User Account?</h2>
+    <p>Are you sure you want to delete account <strong>${esc(username)}</strong>? This user will no longer be able to log in to TaxGuard.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="cancel-delete-user">Cancel</button>
+      <button type="button" class="btn" id="confirm-delete-user-btn" style="background:#c36959;border-color:#c36959;color:white">Delete user</button>
+    </div>
+  `;
+  m.classList.remove('closing');
+  m.showModal();
+  m.querySelector('#cancel-delete-user')?.addEventListener('click',()=>{
+    closeModal(m,()=>{m.innerHTML='';});
+    try{m.close();}catch(e){}
+    m.classList.remove('closing');
+    m.innerHTML='';
+  });
+  m.querySelector('#confirm-delete-user-btn')?.addEventListener('click',()=>{
+    try{
+      deleteWorkstationUser(userId);
+      closeModal(m,()=>{m.innerHTML='';});
+      try{m.close();}catch(e){}
+      m.classList.remove('closing');
+      m.innerHTML='';
+      render();
+      notify(`User ${username} deleted.`);
+    }catch(err){
+      notify('Could not delete user: '+err.message);
+    }
+  });
+}
+
 settings=function(){
   const current=document.body.dataset.theme||'blue';
   const obs=obligations();
   const done=obs.filter(o=>o.filing).length;
   const over=obs.filter(o=>!o.filing&&o.due<today).length;
   const pct=obs.length?Math.round(done/obs.length*100):0;
-  return heading('Settings','Personalize the TaxGuard workspace.','')+`<div class="settings-grid"><div class="panel settings-panel"><div class="panel-head"><div><h2>Color theme</h2><p>Choose a preset workspace accent color.</p></div></div><div class="theme-options">${[['blue','Blue'],['navy','Navy'],['green','Green'],['purple','Purple'],['orange','Orange'],['red','Red']].map(([v,l])=>`<button class="theme-option ${current===v?'active':''}" data-theme="${v}"><span class="theme-swatch ${v}"></span><span>${l}</span>${current===v?'<b>✓</b>':''}</button>`).join('')}</div></div><div class="panel storage-panel"><div class="panel-head"><div><h2>Data storage</h2><p>${database?'Client records and filings are saved in SQLite, shared by localhost and the desktop app.':'This browser stores records locally. The localhost version connects to SQLite.'}</p></div></div><div class="panel-body"><div class="storage-features"><div class="storage-feature-item"><small>Engine</small><strong>${database?'SQLite station':'Browser storage'}</strong></div><div class="storage-feature-item"><small>Scope</small><strong>Clients &amp; filings</strong></div><div class="storage-feature-item"><small>Format</small><strong>JSON v1 archive</strong></div></div><div class="storage-actions"><button class="btn" id="export-records">Export records</button> ${database?.importRecords&&state.clients.length===0?'<button class="btn primary" id="import-records">Import browser records</button>':''}</div></div></div></div><div class="panel reports-panel" style="margin-top:24px"><div class="panel-head"><div><h2>Compliance &amp; Audit Reports</h2><p>Click any report card below to open its executive preview with visual charts, custom commentary, and PDF export.</p></div><span class="subtle">${year} TAX YEAR</span></div><div class="panel-body"><div class="report-stat-strip"><div class="report-stat-card"><small>Total obligations (${year})</small><strong>${obs.length}</strong></div><div class="report-stat-card"><small>Filings completed</small><strong style="color:var(--green)">${done}</strong></div><div class="report-stat-card"><small>Compliance rate</small><strong>${pct}%</strong></div><div class="report-stat-card"><small>Overdue items</small><strong style="color:${over>0?'#c36959':'var(--ink)'}">${over}</strong></div></div><div class="reports-grid"><div class="report-card" id="open-report-preview" data-report="summary" data-export-id="export-summary-report" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📊</span><div><strong>Annual Compliance Summary</strong><small>Client compliance standing, completion percentage, and obligation counts for ${year}.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; save PDF &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF Report</span></div></div><div class="report-card" id="export-filings-report" data-report="filings" data-export-id="export-filings-report" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📑</span><div><strong>Filing Audit Log</strong><small>Detailed submission trail with BIR confirmation numbers, filing dates, and periods.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; save PDF &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF Report</span></div></div><div class="report-card" id="export-clients-report" data-report="clients" data-export-id="export-clients-report" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">👥</span><div><strong>Client Master Roster</strong><small>Complete directory of registered taxpayers, TINs, tax types, and required BIR forms.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; save PDF &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF Report</span></div></div></div></div></div>`;
+
+  const users=fetchWorkstationUsers();
+  const currentAuth=getCurrentUserAuth();
+  const totalActiveUsers=users.filter(u=>u.is_active).length;
+
+  const usersRowsHtml=users.map(u=>{
+    const isCurrent=u.username.toLowerCase()===currentAuth.username.toLowerCase();
+    const initials=getUserInitials(u.username);
+    const roleColors={
+      Admin:{bg:'#eef4fd',text:'#2766db',border:'#d0e2fb'},
+      Staff:{bg:'#f0fdf4',text:'#16866b',border:'#bbf7d0'},
+      'Tax Associate':{bg:'#faf5ff',text:'#7656c7',border:'#e9d5ff'},
+      Auditor:{bg:'#fffbeb',text:'#b45309',border:'#fde68a'}
+    }[u.role]||{bg:'#edf2f7',text:'#334e68',border:'#cbd5e1'};
+
+    return `<tr>
+      <td style="padding:12px 16px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="avatar" style="width:30px;height:30px;min-width:30px;font-size:11px;font-weight:700;background:#e2e8f0;color:#334e68">${initials}</span>
+          <div>
+            <strong style="font-size:13px">${esc(u.username)}</strong>
+            ${isCurrent?'<span class="badge" style="background:#e8f4fd;color:#2766db;font-weight:700;margin-left:6px;font-size:9.5px;vertical-align:middle">Current Account</span>':''}
+          </div>
+        </div>
+      </td>
+      <td style="padding:12px 16px;color:#334e68">${esc(u.company_name||'EOO Tax & Accounting')}</td>
+      <td style="padding:12px 16px">
+        <span class="badge" style="background:${roleColors.bg};color:${roleColors.text};border:1px solid ${roleColors.border};font-weight:700">${esc(u.role||'Staff')}</span>
+      </td>
+      <td style="padding:12px 16px">
+        ${u.is_active?'<span class="badge active">Active</span>':'<span class="badge inactive">Inactive</span>'}
+      </td>
+      <td style="padding:12px 16px;text-align:right">
+        <button type="button" class="btn btn-edit-user" data-user-id="${u.id}" style="padding:5px 12px;font-size:11px;margin-right:6px">Edit</button>
+        ${isCurrent
+          ? '<button type="button" class="btn" disabled title="Cannot delete currently active account" style="padding:5px 10px;font-size:11px;opacity:0.35;cursor:not-allowed">Delete</button>'
+          : (u.is_active&&totalActiveUsers<=1
+            ? '<button type="button" class="btn" disabled title="Cannot delete the only active account" style="padding:5px 10px;font-size:11px;opacity:0.35;cursor:not-allowed">Delete</button>'
+            : `<button type="button" class="btn btn-delete-user" data-user-id="${u.id}" data-username="${esc(u.username)}" style="padding:5px 10px;font-size:11px;color:#c36959">Delete</button>`
+          )
+        }
+      </td>
+    </tr>`;
+  }).join('');
+
+  return heading('Settings','Personalize the TaxGuard workspace.','')+`<div class="settings-grid"><div class="panel settings-panel"><div class="panel-head"><div><h2>Color theme</h2><p>Choose a preset workspace accent color.</p></div></div><div class="theme-options">${[['blue','Blue'],['navy','Navy'],['green','Green'],['purple','Purple'],['orange','Orange'],['red','Red']].map(([v,l])=>`<button class="theme-option ${current===v?'active':''}" data-theme="${v}"><span class="theme-swatch ${v}"></span><span>${l}</span>${current===v?'<b>✓</b>':''}</button>`).join('')}</div></div><div class="panel storage-panel"><div class="panel-head"><div><h2>Data storage</h2><p>${database?'Client records and filings are saved in SQLite, shared by localhost and the desktop app.':'This browser stores records locally. The localhost version connects to SQLite.'}</p></div></div><div class="panel-body"><div class="storage-features"><div class="storage-feature-item"><small>Engine</small><strong>${database?'SQLite station':'Browser storage'}</strong></div><div class="storage-feature-item"><small>Scope</small><strong>Clients &amp; filings</strong></div><div class="storage-feature-item"><small>Format</small><strong>JSON v1 archive</strong></div></div><div class="storage-actions"><button class="btn" id="export-records">Export records</button> ${database?.importRecords&&state.clients.length===0?'<button class="btn primary" id="import-records">Import browser records</button>':''}</div></div></div></div><div class="panel users-panel" style="margin-top:24px"><div class="panel-head"><div><h2>User Account Management</h2><p>Manage workstation credentials, update current user info, and create new user accounts.</p></div><div style="display:flex;align-items:center;gap:12px"><span class="subtle">${users.length} configured account${users.length===1?'':'s'}</span><button type="button" class="btn primary" id="btn-add-user" style="padding:7px 14px;font-size:11.5px">+ Add user account</button></div></div><div class="panel-body" style="padding:0"><div class="table-scroll"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="border-bottom:1px solid var(--line);background:#f8fafc"><th style="padding:10px 16px;text-align:left;font-size:9.5px;text-transform:uppercase;color:#64748b">User Account</th><th style="padding:10px 16px;text-align:left;font-size:9.5px;text-transform:uppercase;color:#64748b">Firm / Display Name</th><th style="padding:10px 16px;text-align:left;font-size:9.5px;text-transform:uppercase;color:#64748b">Role</th><th style="padding:10px 16px;text-align:left;font-size:9.5px;text-transform:uppercase;color:#64748b">Status</th><th style="padding:10px 16px;text-align:right;font-size:9.5px;text-transform:uppercase;color:#64748b">Actions</th></tr></thead><tbody>${usersRowsHtml}</tbody></table></div></div></div><div class="panel reports-panel" style="margin-top:24px"><div class="panel-head"><div><h2>Compliance &amp; Audit Reports</h2><p>Click any report card below to open its executive preview with visual charts, custom commentary, and PDF export.</p></div><span class="subtle">${year} TAX YEAR</span></div><div class="panel-body"><div class="report-stat-strip"><div class="report-stat-card"><small>Total obligations (${year})</small><strong>${obs.length}</strong></div><div class="report-stat-card"><small>Filings completed</small><strong style="color:var(--green)">${done}</strong></div><div class="report-stat-card"><small>Compliance rate</small><strong>${pct}%</strong></div><div class="report-stat-card"><small>Overdue items</small><strong style="color:${over>0?'#c36959':'var(--ink)'}">${over}</strong></div></div><div class="reports-grid"><div class="report-card" id="open-report-preview" data-report="summary" data-export-id="export-summary-report" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📊</span><div><strong>Annual Compliance Summary</strong><small>Client compliance standing, completion percentage, and obligation counts for ${year}.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; save PDF &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF Report</span></div></div><div class="report-card" id="export-filings-report" data-report="filings" data-export-id="export-filings-report" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📑</span><div><strong>Filing Audit Log</strong><small>Detailed submission trail with BIR confirmation numbers, filing dates, and periods.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; save PDF &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF Report</span></div></div><div class="report-card" id="export-clients-report" data-report="clients" data-export-id="export-clients-report" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">👥</span><div><strong>Client Master Roster</strong><small>Complete directory of registered taxpayers, TINs, tax types, and required BIR forms.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; save PDF &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF Report</span></div></div></div></div></div>`;
 };
 document.querySelector('footer span').textContent=database?'Saved to SQLite on this computer':'Changes saved in this browser';
 document.addEventListener('click',async e=>{
+  if(e.target.closest('#btn-add-user')){
+    openUserAccountModal(null);
+  }
+  const editBtn=e.target.closest('.btn-edit-user');
+  if(editBtn){
+    openUserAccountModal(editBtn.dataset.userId);
+  }
+  const delBtn=e.target.closest('.btn-delete-user');
+  if(delBtn){
+    confirmDeleteUser(delBtn.dataset.userId, delBtn.dataset.username);
+  }
   if(e.target.closest('#export-records')){
     const payload={format:'taxguard-export-v1',state,forms};
     const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}));

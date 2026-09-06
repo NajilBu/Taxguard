@@ -15,7 +15,10 @@
     load:()=>call('load'),
     login:(username,password)=>call('login',{username,password}),
     save:(data,revision)=>call('save',data,revision),
-    saveForms:(data,revision)=>call('forms',data,revision)
+    saveForms:(data,revision)=>call('forms',data,revision),
+    getUsers:()=>call('users:list'),
+    saveUser:(userData)=>call('users:save',userData),
+    deleteUser:(id)=>call('users:delete',{id})
   };
   try{window.taxguardDB.load();}catch(error){
     document.querySelector('#content').textContent=error.message;
