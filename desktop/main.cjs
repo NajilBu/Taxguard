@@ -71,6 +71,13 @@ else app.whenReady().then(async()=>{
   win.once('ready-to-show',()=>{
     if(!smoke){win.maximize();win.show();}
   });
+  win.webContents.on('before-input-event',(event,input)=>{
+    if(input.type==='keyDown' && input.control && input.shift && input.key.toLowerCase()==='j'){
+      event.preventDefault();
+      if(win.webContents.isDevToolsOpened()) win.webContents.closeDevTools();
+      else win.webContents.openDevTools({mode:'detach'});
+    }
+  });
   win.removeMenu();
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
   win.webContents.on('will-navigate',(e,url)=>{if(url!==entry && !url.startsWith('blob:') && !url.startsWith('data:'))e.preventDefault()});

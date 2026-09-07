@@ -887,3 +887,8 @@ body { background-color: #e4eaf1; }
   }
 }
 
+/* Report cards are interactive controls; keep them consistent with the panel design. */
+.report-card{appearance:none;-webkit-appearance:none;width:100%;font:inherit;text-align:left;color:var(--ink);background:#fff;outline:none}
+.report-card strong{display:block;font:700 14px Manrope,sans-serif;color:var(--ink);margin-bottom:5px}
+.report-card span{display:block;font-size:11.5px;color:var(--muted);line-height:1.5}
+.report-card:focus-visible{border-color:#3c7be6;box-shadow:0 0 0 3px rgba(60,123,230,.18)}
