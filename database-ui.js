@@ -169,9 +169,13 @@ function getSummaryReportData(reportYear){
   return { title:`TaxGuard-Compliance-Summary-${y}.xls`, headers, rows, obs };
 }
 
+function sortReportByDueDate(records){
+  return [...records].sort((a,b)=>a.due.localeCompare(b.due)||a.c.name.localeCompare(b.c.name)||a.f.id.localeCompare(b.f.id)||a.p.localeCompare(b.p));
+}
+
 function getFilingsReportData(reportYear){
   const y=reportYear||year;
-  const obs=obligations();
+  const obs=sortReportByDueDate(obligations());
   const headers=['Client Name','TIN','BIR Form','Covered Period','Tax Year','Due Date','Filing Status','Filing Date','Confirmation / Reference','Remarks'];
   const rows=obs.map(o=>[
     o.c.name,
@@ -274,7 +278,7 @@ function openReportPreview(reportType,reportYear){
   const y=reportYear||year;
   const m=document.querySelector('#modal');
   if(!m)return;
-  const obs=obligations();
+  const obs=sortReportByDueDate(obligations());
   const todayFormatted=new Date().toLocaleDateString('en-PH',{year:'numeric',month:'short',day:'numeric'});
 
   m.classList.add('report-modal');
@@ -725,6 +729,7 @@ function openUserAccountModal(userId,initialData=null){
 
   const totalActive=users.filter(u=>u.is_active).length;
   const cannotDeactivate=isEditing&&user.is_active&&totalActive<=1;
+  const canDelete=isEditing&&!isCurrent&&!(user.is_active&&totalActive<=1);
 
   const usernameVal=initialData?.username!==undefined?initialData.username:(user?.username||'');
   const companyVal=initialData?.company_name!==undefined?initialData.company_name:(user?.company_name||'EOO Tax & Accounting');
@@ -775,6 +780,7 @@ function openUserAccountModal(userId,initialData=null){
       <div id="user-modal-error-alert" style="display:none;background:#fff0ee;border:1px solid #fed7d7;color:#c36959;padding:9px 13px;border-radius:6px;font-size:12px;margin-top:14px"></div>
 
       <div class="modal-actions">
+        ${canDelete?'<button type="button" class="btn danger-btn" id="delete-user-from-modal">Delete account</button>':''}
         <button type="button" class="btn" id="cancel-user-modal">Cancel</button>
         <button type="submit" class="btn primary" id="save-user-btn">${isEditing?'Save changes':'Create account'}</button>
       </div>
@@ -801,6 +807,12 @@ function openUserAccountModal(userId,initialData=null){
     try{m.close();}catch(e){}
     m.classList.remove('closing');
     m.innerHTML='';
+  });
+  m.querySelector('#delete-user-from-modal')?.addEventListener('click',()=>{
+    closeModal(m,()=>{
+      m.innerHTML='';
+      confirmDeleteUser(user.id,user.username);
+    });
   });
   m.querySelector('#user-account-form')?.addEventListener('submit',e=>{
     e.preventDefault();
@@ -997,8 +1009,6 @@ settings=function(){
 
   const users=fetchWorkstationUsers();
   const currentAuth=getCurrentUserAuth();
-  const totalActiveUsers=users.filter(u=>u.is_active).length;
-
   const usersRowsHtml=users.map(u=>{
     const isCurrent=u.username.toLowerCase()===currentAuth.username.toLowerCase();
     const initials=getUserInitials(u.username);
@@ -1009,7 +1019,7 @@ settings=function(){
       Auditor:{bg:'#fffbeb',text:'#b45309',border:'#fde68a'}
     }[u.role]||{bg:'#edf2f7',text:'#334e68',border:'#cbd5e1'};
 
-    return `<tr>
+    return `<tr class="user-account-row" data-user-id="${u.id}" role="button" tabindex="0" aria-label="Edit user ${esc(u.username)}">
       <td style="padding:12px 16px">
         <div style="display:flex;align-items:center;gap:10px">
           <span class="avatar" style="width:30px;height:30px;min-width:30px;font-size:11px;font-weight:700;background:#e2e8f0;color:#334e68">${initials}</span>
@@ -1026,33 +1036,18 @@ settings=function(){
       <td style="padding:12px 16px">
         ${u.is_active?'<span class="badge active">Active</span>':'<span class="badge inactive">Inactive</span>'}
       </td>
-      <td style="padding:12px 16px;text-align:right">
-        <button type="button" class="btn btn-edit-user" data-user-id="${u.id}" style="padding:5px 12px;font-size:11px;margin-right:6px">Edit</button>
-        ${isCurrent
-          ? '<button type="button" class="btn" disabled title="Cannot delete currently active account" style="padding:5px 10px;font-size:11px;opacity:0.35;cursor:not-allowed">Delete</button>'
-          : (u.is_active&&totalActiveUsers<=1
-            ? '<button type="button" class="btn" disabled title="Cannot delete the only active account" style="padding:5px 10px;font-size:11px;opacity:0.35;cursor:not-allowed">Delete</button>'
-            : `<button type="button" class="btn btn-delete-user" data-user-id="${u.id}" data-username="${esc(u.username)}" style="padding:5px 10px;font-size:11px;color:#c36959">Delete</button>`
-          )
-        }
-      </td>
     </tr>`;
   }).join('');
 
-  return heading('Settings','Personalize the TaxGuard workspace.','')+`<div class="settings-grid"><div class="panel settings-panel"><div class="panel-head"><div><h2>Color theme</h2><p>Choose a preset workspace accent color.</p></div></div><div class="theme-options">${[['blue','Blue'],['navy','Navy'],['green','Green'],['purple','Purple'],['orange','Orange'],['red','Red']].map(([v,l])=>`<button class="theme-option ${current===v?'active':''}" data-theme="${v}"><span class="theme-swatch ${v}"></span><span>${l}</span>${current===v?'<b>✓</b>':''}</button>`).join('')}</div></div><div class="panel storage-panel"><div class="panel-head"><div><h2>Data storage</h2><p>${database?'Client records and filings are saved in SQLite, shared by localhost and the desktop app.':'This browser stores records locally. The localhost version connects to SQLite.'}</p></div></div><div class="panel-body"><div class="storage-features"><div class="storage-feature-item"><small>Engine</small><strong>${database?'SQLite station':'Browser storage'}</strong></div><div class="storage-feature-item"><small>Scope</small><strong>Clients &amp; filings</strong></div><div class="storage-feature-item"><small>Format</small><strong>JSON v1 archive</strong></div></div><div class="storage-actions"><button class="btn" id="export-records">Export records</button> ${database?.importRecords&&state.clients.length===0?'<button class="btn primary" id="import-records">Import browser records</button>':''}</div></div></div></div><div class="panel users-panel" style="margin-top:24px"><div class="panel-head"><div><h2>User Account Management</h2><p>Manage workstation credentials, update current user info, and create new user accounts.</p></div><div style="display:flex;align-items:center;gap:12px"><span class="subtle">${users.length} configured account${users.length===1?'':'s'}</span><button type="button" class="btn primary" id="btn-add-user" style="padding:7px 14px;font-size:11.5px">+ Add user account</button></div></div><div class="panel-body" style="padding:0"><div class="table-scroll"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="border-bottom:1px solid var(--line);background:#f8fafc"><th style="padding:10px 16px;text-align:left;font-size:9.5px;text-transform:uppercase;color:#64748b">User Account</th><th style="padding:10px 16px;text-align:left;font-size:9.5px;text-transform:uppercase;color:#64748b">Firm / Display Name</th><th style="padding:10px 16px;text-align:left;font-size:9.5px;text-transform:uppercase;color:#64748b">Role</th><th style="padding:10px 16px;text-align:left;font-size:9.5px;text-transform:uppercase;color:#64748b">Status</th><th style="padding:10px 16px;text-align:right;font-size:9.5px;text-transform:uppercase;color:#64748b">Actions</th></tr></thead><tbody>${usersRowsHtml}</tbody></table></div></div></div><div class="panel reports-panel" style="margin-top:24px"><div class="panel-head"><div><h2>Compliance &amp; Audit Reports</h2><p>Click any report card below to open its executive preview with visual charts, custom commentary, and PDF export.</p></div><span class="subtle">${year} TAX YEAR</span></div><div class="panel-body"><div class="report-stat-strip"><div class="report-stat-card"><small>Total obligations (${year})</small><strong>${obs.length}</strong></div><div class="report-stat-card"><small>Filings completed</small><strong style="color:var(--green)">${done}</strong></div><div class="report-stat-card"><small>Compliance rate</small><strong>${pct}%</strong></div><div class="report-stat-card"><small>Overdue items</small><strong style="color:${over>0?'#c36959':'var(--ink)'}">${over}</strong></div></div><div class="reports-grid"><div class="report-card" id="open-report-preview" data-report="summary" data-export-id="export-summary-report" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📊</span><div><strong>Annual Compliance Summary</strong><small>Client compliance standing, completion percentage, and obligation counts for ${year}.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; save PDF &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF Report</span></div></div><div class="report-card" id="export-filings-report" data-report="filings" data-export-id="export-filings-report" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📑</span><div><strong>Filing Audit Log</strong><small>Detailed submission trail with BIR confirmation numbers, filing dates, and periods.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; save PDF &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF Report</span></div></div><div class="report-card" id="export-clients-report" data-report="clients" data-export-id="export-clients-report" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">👥</span><div><strong>Client Master Roster</strong><small>Complete directory of registered taxpayers, TINs, tax types, and required BIR forms.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; save PDF &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF Report</span></div></div></div></div></div>`;
 };
 document.querySelector('footer span').textContent=database?'Saved to SQLite on this computer':'Changes saved in this browser';
 document.addEventListener('click',async e=>{
   if(e.target.closest('#btn-add-user')){
     openUserAccountModal(null);
   }
-  const editBtn=e.target.closest('.btn-edit-user');
-  if(editBtn){
-    openUserAccountModal(editBtn.dataset.userId);
-  }
-  const delBtn=e.target.closest('.btn-delete-user');
-  if(delBtn){
-    confirmDeleteUser(delBtn.dataset.userId, delBtn.dataset.username);
+  const userRow=e.target.closest('.user-account-row');
+  if(userRow){
+    openUserAccountModal(userRow.dataset.userId);
   }
   if(e.target.closest('#export-records')){
     const payload={format:'taxguard-export-v1',state,forms};
@@ -1069,6 +1064,12 @@ document.addEventListener('click',async e=>{
 });
 document.addEventListener('keydown',e=>{
   if(e.key==='Enter'||e.key===' '){
+    const userRow=document.activeElement?.closest?.('.user-account-row');
+    if(userRow){
+      e.preventDefault();
+      openUserAccountModal(userRow.dataset.userId);
+      return;
+    }
     const card=document.activeElement?.closest?.('.report-card[data-report]');
     if(card){
       e.preventDefault();
@@ -1088,3 +1089,73 @@ window.addEventListener('focus',()=>{
   if(database&&!document.querySelector('#modal').open){try{restoreDatabase();render();}catch(error){notify('Could not refresh records: '+error.message);}}
 });
 render();
+// Scroll reveal is self-contained so it can be removed without changing page layouts.
+(() => {
+  const content = document.querySelector('#content');
+  if (!content || !Element.prototype.animate) return;
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const active = new Map();
+  const entrances = new Map();
+  let frame = 0, printing = false;
+  function update() {
+    frame = 0;
+    const height = window.innerHeight;
+    const band = Math.min(180, height * .22);
+    // Top-anchored scaling keeps this measurement stable as the card expands.
+    const positions = [...active].map(([card, animation]) => [card, animation, card.getBoundingClientRect().top]);
+    for (const [card, animation, top] of positions) {
+      const progress = card.contains(document.activeElement) ? 1 : Math.max(0, Math.min(1, (height - top) / band));
+      animation.currentTime = progress * 1000;
+    }
+  }
+  function scheduleUpdate() { if (!frame) frame = requestAnimationFrame(update); }
+  function observeCards() {
+    for (const [card, animation] of active) {
+      if (!content.contains(card) || reducedMotion.matches || printing) {
+        entrances.get(card)?.cancel();
+        entrances.delete(card);
+        animation.cancel(); active.delete(card);
+      }
+    }
+    if (reducedMotion.matches || printing) return;
+    content.querySelectorAll('.stat, .panel, .deadline-card').forEach(card => {
+      // Avoid animating a card twice when it is inside another card.
+      if (card.parentElement.closest('.stat, .panel, .deadline-card')) return;
+      if (active.has(card)) return;
+      const animation = card.animate([
+        { opacity: 0, scale: '0.86', transformOrigin: 'center top' },
+        { opacity: 1, scale: '1', transformOrigin: 'center top' }
+      ], { duration: 1000, fill: 'both', easing: 'ease-out' });
+      animation.pause();
+      active.set(card, animation);
+      const top = card.getBoundingClientRect().top;
+      const band = Math.min(180, window.innerHeight * .22);
+      // Cards already on screen also get an entrance; cards below use scroll progress.
+      if (top >= 0 && top <= window.innerHeight - band && !card.contains(document.activeElement)) {
+        const entrance = card.animate([
+          { opacity: 0, scale: '0.86', transformOrigin: 'center top' },
+          { opacity: 1, scale: '1', transformOrigin: 'center top' }
+        ], { duration: 650, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+        entrances.set(card, entrance);
+        entrance.finished.catch(() => {}).finally(() => {
+          if (entrances.get(card) === entrance) entrances.delete(card);
+        });
+      }
+    });
+    scheduleUpdate();
+  }
+  new MutationObserver(observeCards).observe(content, { childList: true, subtree: true });
+  window.addEventListener('scroll', () => {
+    // Hand control to scrolling immediately, rather than finishing an entrance first.
+    entrances.forEach(animation => animation.cancel());
+    entrances.clear();
+    scheduleUpdate();
+  }, { passive: true });
+  window.addEventListener('resize', scheduleUpdate);
+  content.addEventListener('focusin', scheduleUpdate);
+  content.addEventListener('focusout', scheduleUpdate);
+  reducedMotion.addEventListener('change', observeCards);
+  window.addEventListener('beforeprint', () => { printing = true; observeCards(); });
+  window.addEventListener('afterprint', () => { printing = false; observeCards(); });
+  observeCards();
+})();

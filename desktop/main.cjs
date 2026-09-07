@@ -67,7 +67,10 @@ else app.whenReady().then(async()=>{
   });
   Menu.setApplicationMenu(null);
   const appIconPath=path.join(__dirname,'icon.ico');
-  win=new BrowserWindow({width:1400,height:900,icon:appIconPath,autoHideMenuBar:true,show:!smoke,webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true}});
+  win=new BrowserWindow({width:1400,height:900,icon:appIconPath,autoHideMenuBar:true,show:false,webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true}});
+  win.once('ready-to-show',()=>{
+    if(!smoke){win.maximize();win.show();}
+  });
   win.removeMenu();
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
   win.webContents.on('will-navigate',(e,url)=>{if(url!==entry && !url.startsWith('blob:') && !url.startsWith('data:'))e.preventDefault()});
