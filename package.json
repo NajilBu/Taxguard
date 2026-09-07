@@ -1,7 +1,7 @@
 {
   "name": "taxguard-desktop",
   "productName": "TaxGuard",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "main": "desktop/main.cjs",
   "scripts": {
@@ -43,7 +43,7 @@
       "artifactName": "${productName} Setup.${ext}"
     },
     "portable": {
-      "artifactName": "${productName} ${version}.${ext}"
+      "artifactName": "${productName}-${version}.${ext}"
     }
   },
   "devDependencies": {
