@@ -9,5 +9,7 @@ contextBridge.exposeInMainWorld('taxguardDB',{
   savePdf:(defaultName)=>ipcRenderer.invoke('report:savePdf',defaultName),
   getUsers:()=>call('users:list'),
   saveUser:(userData)=>call('users:save',userData),
-  deleteUser:(id)=>call('users:delete',{id})
+  deleteUser:(id)=>call('users:delete',{id}),
+  getCompanyName:()=>call('company:get'),
+  saveCompanyName:(name)=>call('company:save',{name})
 });

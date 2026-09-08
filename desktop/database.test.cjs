@@ -58,6 +58,17 @@ test('Store authenticates valid company credentials and rejects invalid credenti
   assert.throws(()=>s.login('','taxguard2026'),/Username is required/);
   s.close();
 });
+test('Company name setting updates the workspace and every login account',()=>{
+  const {file}=fixture(),s=new Store(file,root);
+  s.saveUser({username:'staff',company_name:'Old name',role:'Staff',password:'secret1'});
+  assert.equal(s.saveCompanyName('New Firm & Associates'),'New Firm & Associates');
+  assert.equal(s.getCompanyName(),'New Firm & Associates');
+  assert.equal(s.getUsers().every(u=>u.company_name==='New Firm & Associates'),true);
+  assert.equal(s.login('admin','taxguard2026').company,'New Firm & Associates');
+  assert.equal(s.login('staff','secret1').company,'New Firm & Associates');
+  assert.throws(()=>s.saveCompanyName('   '),/Company name is required/);
+  s.close();
+});
 test('Landing page contains no sqlite references and enforces session-only sign out on exit',()=>{
   const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
   assert.equal(html.includes('<body class="logged-out">'),true,'Workspace must be hidden before scripts initialize');

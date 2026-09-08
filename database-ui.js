@@ -664,6 +664,38 @@ function getCurrentUserAuth(){
   }
 }
 
+function getWorkspaceCompanyName(){
+  if(window.taxguardDB?.getCompanyName){
+    try{return window.taxguardDB.getCompanyName();}catch(e){}
+  }
+  return localStorage.getItem('taxguard_company_name')||getCurrentUserAuth().company||'EOO Tax & Accounting';
+}
+
+function applyWorkspaceCompanyName(company){
+  const currentAuth=getCurrentUserAuth();
+  const updatedAuth={...currentAuth,company};
+  sessionStorage.setItem('taxguard_auth',JSON.stringify(updatedAuth));
+  const firmEl=document.querySelector('.firm .firm-info');
+  if(firmEl)firmEl.innerHTML=`${esc(company)}<small>Compliance team</small>`;
+  const loginDisplay=document.querySelector('#login-company-display');
+  if(loginDisplay)loginDisplay.textContent=company;
+  const firmAvatar=document.querySelector('.firm .avatar');
+  if(firmAvatar)firmAvatar.textContent=getUserInitials(company);
+}
+
+function persistWorkspaceCompanyName(company){
+  const saved=window.taxguardDB?.saveCompanyName
+    ?window.taxguardDB.saveCompanyName(company)
+    :company;
+  if(!window.taxguardDB){
+    localStorage.setItem('taxguard_company_name',saved);
+    const users=fetchWorkstationUsers().map(user=>({...user,company_name:saved}));
+    localStorage.setItem('taxguard_users',JSON.stringify(users));
+  }
+  applyWorkspaceCompanyName(saved);
+  return saved;
+}
+
 function fetchWorkstationUsers(){
   if(window.taxguardDB?.getUsers){
     try{const res=window.taxguardDB.getUsers();if(Array.isArray(res))return res;}catch(e){}
@@ -1009,6 +1041,7 @@ settings=function(){
 
   const users=fetchWorkstationUsers();
   const currentAuth=getCurrentUserAuth();
+  const companyName=getWorkspaceCompanyName();
   const usersRowsHtml=users.map(u=>{
     const isCurrent=u.username.toLowerCase()===currentAuth.username.toLowerCase();
     const initials=getUserInitials(u.username);
@@ -1040,6 +1073,15 @@ settings=function(){
   }).join('');
 
   return heading('Settings','Personalize the TaxGuard workspace.','')+`
+    <div class="panel company-settings-panel" style="margin-bottom:24px">
+      <div class="panel-head"><div><h2>Company name</h2><p>Set the firm name shown throughout this workspace and for every user account.</p></div></div>
+      <div class="panel-body">
+        <form id="company-name-form" style="display:flex;align-items:flex-end;gap:12px;max-width:680px">
+          <div style="flex:1"><label for="company-name-input" style="margin-top:0">Company / Firm Name</label><input id="company-name-input" name="company_name" required maxlength="120" value="${esc(companyName)}" style="width:100%"></div>
+          <button type="submit" class="btn primary">Save company name</button>
+        </form>
+      </div>
+    </div>
     <div class="settings-grid">
       <div class="panel settings-panel">
         <div class="panel-head"><div><h2>Color theme</h2><p>Choose a preset workspace accent color.</p></div></div>
@@ -1070,6 +1112,18 @@ document.addEventListener('click',async e=>{
   const reportCard=e.target.closest('.report-card[data-report]');
   if(reportCard){
     openReportPreview(reportCard.dataset.report,year);
+  }
+});
+document.addEventListener('submit',e=>{
+  if(e.target.id!=='company-name-form')return;
+  e.preventDefault();
+  const company=String(new FormData(e.target).get('company_name')||'').trim();
+  try{
+    persistWorkspaceCompanyName(company);
+    render();
+    notify('Company name updated.');
+  }catch(error){
+    notify('Could not update company name: '+error.message);
   }
 });
 document.addEventListener('keydown',e=>{
