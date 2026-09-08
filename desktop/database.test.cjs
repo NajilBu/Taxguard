@@ -60,13 +60,16 @@ test('Store authenticates valid company credentials and rejects invalid credenti
 });
 test('Company name setting updates the workspace and every login account',()=>{
   const {file}=fixture(),s=new Store(file,root);
+  const logo='data:image/png;base64,iVBORw0KGgo=';
   s.saveUser({username:'staff',company_name:'Old name',role:'Staff',password:'secret1'});
-  assert.equal(s.saveCompanyName('New Firm & Associates'),'New Firm & Associates');
+  assert.deepEqual(s.saveCompanyProfile({name:'New Firm & Associates',logo}),{name:'New Firm & Associates',logo});
   assert.equal(s.getCompanyName(),'New Firm & Associates');
+  assert.deepEqual(s.getCompanyProfile(),{name:'New Firm & Associates',logo});
   assert.equal(s.getUsers().every(u=>u.company_name==='New Firm & Associates'),true);
   assert.equal(s.login('admin','taxguard2026').company,'New Firm & Associates');
   assert.equal(s.login('staff','secret1').company,'New Firm & Associates');
   assert.throws(()=>s.saveCompanyName('   '),/Company name is required/);
+  assert.throws(()=>s.saveCompanyProfile({name:'Firm',logo:'data:image/svg+xml;base64,PHN2Zz4='}),/PNG, JPEG, WebP, GIF, BMP, or ICO/);
   s.close();
 });
 test('Landing page contains no sqlite references and enforces session-only sign out on exit',()=>{

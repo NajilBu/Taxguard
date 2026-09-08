@@ -250,6 +250,7 @@ function setAuthState(loggedIn,authInfo,animate=false){
     if(firmAvatar&&comp){
       firmAvatar.textContent=getUserInitials(comp);
     }
+    window.refreshCompanyProfile?.();
 
     if(animate){
       const landing=document.querySelector('#login-landing');
@@ -369,7 +370,7 @@ function refreshCurrentDate() {
   if(current===today)return;
   today=current;
   // Preserve any form being edited; its next render will use the new date.
-  if(!document.querySelector('#modal')?.open)render();
+  if(!document.querySelector('#modal')?.open&&!document.querySelector('#company-profile-form'))render();
 }
 setInterval(refreshCurrentDate,60000);
 window.addEventListener('focus',refreshCurrentDate);

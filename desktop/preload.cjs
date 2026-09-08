@@ -11,5 +11,7 @@ contextBridge.exposeInMainWorld('taxguardDB',{
   saveUser:(userData)=>call('users:save',userData),
   deleteUser:(id)=>call('users:delete',{id}),
   getCompanyName:()=>call('company:get'),
-  saveCompanyName:(name)=>call('company:save',{name})
+  saveCompanyName:(name)=>call('company:save',{name}),
+  getCompanyProfile:()=>call('company:profile:get'),
+  saveCompanyProfile:(profile)=>call('company:profile:save',profile)
 });

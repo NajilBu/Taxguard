@@ -555,6 +555,8 @@ function openReportPreview(reportType,reportYear){
     };
   }
 
+  const companyProfile=getWorkspaceCompanyProfile();
+  const reportCompanyLogo=companyProfile.logo?`<img class="report-company-logo" src="${companyProfile.logo}" alt="${esc(companyProfile.name)} logo">`:'';
   m.innerHTML=`<div class="report-preview-wrap">
     <div class="preview-toolbar no-print">
       <div class="preview-toolbar-title">
@@ -577,9 +579,13 @@ function openReportPreview(reportType,reportYear){
 
     <div class="report-sheet">
       <div class="sheet-header">
-        <div>
+        <div class="sheet-company-heading">
+          ${reportCompanyLogo}
+          <div>
+          <small class="report-company-name">${esc(companyProfile.name)}</small>
           <h2>${reportTitle}</h2>
           <p>${reportSub}</p>
+          </div>
         </div>
         <div class="sheet-meta">
           <strong>TAX YEAR: ${y}</strong><br>
@@ -671,7 +677,28 @@ function getWorkspaceCompanyName(){
   return localStorage.getItem('taxguard_company_name')||getCurrentUserAuth().company||'EOO Tax & Accounting';
 }
 
-function applyWorkspaceCompanyName(company){
+function getWorkspaceCompanyProfile(){
+  if(window.taxguardDB?.getCompanyProfile){
+    try{return window.taxguardDB.getCompanyProfile();}catch(e){}
+  }
+  return {name:getWorkspaceCompanyName(),logo:localStorage.getItem('taxguard_company_logo')||''};
+}
+let companyProfileDraft=null;
+
+function setCompanyLogoSlot(element,logo,company){
+  if(!element)return;
+  element.classList.add('company-logo-slot');
+  if(logo){
+    element.innerHTML=`<img src="${logo}" alt="${esc(company)} logo">`;
+    element.classList.add('has-company-logo');
+  }else{
+    element.textContent=getUserInitials(company);
+    element.classList.remove('has-company-logo');
+  }
+}
+
+function applyWorkspaceCompanyProfile(profile){
+  const company=profile.name;
   const currentAuth=getCurrentUserAuth();
   const updatedAuth={...currentAuth,company};
   sessionStorage.setItem('taxguard_auth',JSON.stringify(updatedAuth));
@@ -679,22 +706,30 @@ function applyWorkspaceCompanyName(company){
   if(firmEl)firmEl.innerHTML=`${esc(company)}<small>Compliance team</small>`;
   const loginDisplay=document.querySelector('#login-company-display');
   if(loginDisplay)loginDisplay.textContent=company;
-  const firmAvatar=document.querySelector('.firm .avatar');
-  if(firmAvatar)firmAvatar.textContent=getUserInitials(company);
+  setCompanyLogoSlot(document.querySelector('.firm .avatar'),profile.logo,company);
+  setCompanyLogoSlot(document.querySelector('.firm-chip .avatar'),profile.logo,company);
+}
+
+function persistWorkspaceCompanyProfile(profile){
+  const saved=window.taxguardDB?.saveCompanyProfile
+    ?window.taxguardDB.saveCompanyProfile(profile)
+    :profile;
+  if(!window.taxguardDB){
+    localStorage.setItem('taxguard_company_name',saved.name);
+    localStorage.setItem('taxguard_company_logo',saved.logo||'');
+    const users=fetchWorkstationUsers().map(user=>({...user,company_name:saved.name}));
+    localStorage.setItem('taxguard_users',JSON.stringify(users));
+  }
+  applyWorkspaceCompanyProfile(saved);
+  return saved;
 }
 
 function persistWorkspaceCompanyName(company){
-  const saved=window.taxguardDB?.saveCompanyName
-    ?window.taxguardDB.saveCompanyName(company)
-    :company;
-  if(!window.taxguardDB){
-    localStorage.setItem('taxguard_company_name',saved);
-    const users=fetchWorkstationUsers().map(user=>({...user,company_name:saved}));
-    localStorage.setItem('taxguard_users',JSON.stringify(users));
-  }
-  applyWorkspaceCompanyName(saved);
-  return saved;
+  return persistWorkspaceCompanyProfile({...getWorkspaceCompanyProfile(),name:company}).name;
 }
+
+applyWorkspaceCompanyProfile(getWorkspaceCompanyProfile());
+window.refreshCompanyProfile=()=>applyWorkspaceCompanyProfile(getWorkspaceCompanyProfile());
 
 function fetchWorkstationUsers(){
   if(window.taxguardDB?.getUsers){
@@ -1041,7 +1076,11 @@ settings=function(){
 
   const users=fetchWorkstationUsers();
   const currentAuth=getCurrentUserAuth();
-  const companyName=getWorkspaceCompanyName();
+  const companyProfile=companyProfileDraft||getWorkspaceCompanyProfile();
+  const companyName=companyProfile.name;
+  const companyLogoPreview=companyProfile.logo
+    ?`<img src="${companyProfile.logo}" alt="${esc(companyName)} logo">`
+    :`<span>${esc(getUserInitials(companyName))}</span>`;
   const usersRowsHtml=users.map(u=>{
     const isCurrent=u.username.toLowerCase()===currentAuth.username.toLowerCase();
     const initials=getUserInitials(u.username);
@@ -1074,11 +1113,14 @@ settings=function(){
 
   return heading('Settings','Personalize the TaxGuard workspace.','')+`
     <div class="panel company-settings-panel" style="margin-bottom:24px">
-      <div class="panel-head"><div><h2>Company name</h2><p>Set the firm name shown throughout this workspace and for every user account.</p></div></div>
+      <div class="panel-head"><div><h2>Company Profile</h2><p>Set the firm name and logo shown throughout this workspace and in reports.</p></div></div>
       <div class="panel-body">
-        <form id="company-name-form" style="display:flex;align-items:flex-end;gap:12px;max-width:680px">
-          <div style="flex:1"><label for="company-name-input" style="margin-top:0">Company / Firm Name</label><input id="company-name-input" name="company_name" required maxlength="120" value="${esc(companyName)}" style="width:100%"></div>
-          <button type="submit" class="btn primary">Save company name</button>
+        <form id="company-profile-form" class="company-profile-form">
+          <div class="company-name-editor"><label for="company-name-input" style="margin-top:0">Company / Firm Name</label><input id="company-name-input" name="company_name" required maxlength="120" value="${esc(companyName)}"><button type="submit" class="btn primary">Save company profile</button></div>
+          <div class="company-logo-editor">
+            <button type="button" class="company-logo-preview ${companyProfile.logo?'has-logo':''}" id="company-logo-preview" aria-label="Preview or change company logo" title="Preview or change company logo">${companyLogoPreview}</button>
+            <div><span>Company Logo</span><small>Click the logo to preview or change it.</small><input id="company-logo-input" name="company_logo" type="file" hidden accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/x-icon,image/vnd.microsoft.icon,.jpg,.jpeg,.jfif,.ico"><small id="company-logo-error" class="company-logo-error" aria-live="polite"></small></div>
+          </div>
         </form>
       </div>
     </div>
@@ -1094,6 +1136,27 @@ settings=function(){
 };
 document.querySelector('footer span').textContent=database?'Saved to SQLite on this computer':'Changes saved in this browser';
 document.addEventListener('click',async e=>{
+  if(e.target.closest('#company-logo-preview')){
+    const profile=companyProfileDraft||getWorkspaceCompanyProfile();
+    const m=document.querySelector('#modal');
+    m.classList.remove('report-modal','closing');
+    m.innerHTML=`<h2>Company logo</h2><p>PNG, JPEG, WebP, GIF, BMP, or ICO. Maximum 5 MB.</p><div id="company-logo-modal-preview" class="company-logo-modal-preview">${profile.logo?`<img src="${profile.logo}" alt="Company logo">`:esc(getUserInitials(profile.name))}</div><p id="company-logo-modal-status" role="status">Changes are saved with Save company profile.</p><div class="modal-actions"><button type="button" class="btn" id="remove-company-logo">Remove logo</button><button type="button" class="btn primary" id="change-company-logo">Change logo</button><button type="button" class="btn" id="close-company-logo">Close</button></div>`;
+    m.querySelector('#change-company-logo').onclick=()=>document.querySelector('#company-logo-input').click();
+    m.querySelector('#close-company-logo').onclick=()=>closeModal(m);
+    m.showModal();
+    return;
+  }
+  if(e.target.closest('#remove-company-logo')){
+    const company=String(document.querySelector('#company-name-input')?.value||getWorkspaceCompanyName()).trim();
+    companyProfileDraft={name:company,logo:''};
+    const preview=document.querySelector('#company-logo-preview');
+    if(preview){preview.textContent=getUserInitials(company);preview.classList.remove('has-logo');}
+    const largePreview=document.querySelector('#company-logo-modal-preview');
+    if(largePreview)largePreview.textContent=getUserInitials(company);
+    document.querySelector('#company-logo-input').value='';
+    e.target.closest('#remove-company-logo').remove();
+    return;
+  }
   if(e.target.closest('#btn-add-user')){
     openUserAccountModal(null);
   }
@@ -1114,16 +1177,58 @@ document.addEventListener('click',async e=>{
     openReportPreview(reportCard.dataset.report,year);
   }
 });
-document.addEventListener('submit',e=>{
-  if(e.target.id!=='company-name-form')return;
+document.addEventListener('change',e=>{
+  if(e.target.id!=='company-logo-input'||!e.target.files?.[0])return;
+  const file=e.target.files[0];
+  const company=String(document.querySelector('#company-name-input')?.value||getWorkspaceCompanyName()).trim();
+  const extension=file.name.split('.').pop()?.toLowerCase();
+  const inferredMime={png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',jfif:'image/jpeg',webp:'image/webp',gif:'image/gif',bmp:'image/bmp',ico:'image/x-icon'}[extension];
+  const logoMime=file.type||inferredMime;
+  const allowed=['image/png','image/jpeg','image/webp','image/gif','image/bmp','image/x-icon','image/vnd.microsoft.icon'];
+  const error=document.querySelector('#company-logo-error');
+  if(file.size>5*1024*1024||!allowed.includes(logoMime)){
+    const message=file.size>5*1024*1024?'The selected logo is larger than 5 MB.':'That image format is not supported. Choose PNG, JPEG, WebP, GIF, BMP, or ICO.';
+    if(error)error.textContent=message;
+    const status=document.querySelector('#company-logo-modal-status');if(status)status.textContent=message;
+    notify(message);companyProfileDraft={...(companyProfileDraft||getWorkspaceCompanyProfile()),name:company};return;
+  }
+  if(error)error.textContent='';
+  const reader=new FileReader();
+  reader.onload=async()=>{
+    const dataUrl=String(reader.result).replace(/^data:[^;]*;/,`data:${logoMime};`);
+    const image=new Image();
+    image.src=dataUrl;
+    try{await image.decode();}catch{
+      const message='This image could not be opened. Choose another picture.';
+      if(error)error.textContent=message;
+      const status=document.querySelector('#company-logo-modal-status');if(status)status.textContent=message;
+      return;
+    }
+    companyProfileDraft={name:document.querySelector('#company-name-input')?.value??company,logo:dataUrl};
+    const preview=document.querySelector('#company-logo-preview');
+    if(preview){image.alt='Company logo preview';preview.replaceChildren(image);preview.classList.add('has-logo');}
+    const modal=document.querySelector('#modal');
+    if(modal?.open&&modal.querySelector('#company-logo-modal-preview'))closeModal(modal);
+  };
+  reader.onerror=()=>notify('Could not read the selected logo.');
+  reader.readAsDataURL(file);
+});
+document.addEventListener('input',e=>{
+  if(e.target.id!=='company-name-input')return;
+  companyProfileDraft={...(companyProfileDraft||getWorkspaceCompanyProfile()),name:e.target.value};
+});
+document.addEventListener('submit',async e=>{
+  if(e.target.id!=='company-profile-form')return;
   e.preventDefault();
   const company=String(new FormData(e.target).get('company_name')||'').trim();
   try{
-    persistWorkspaceCompanyName(company);
+    const logo=(companyProfileDraft||getWorkspaceCompanyProfile()).logo;
+    persistWorkspaceCompanyProfile({name:company,logo});
+    companyProfileDraft=null;
     render();
-    notify('Company name updated.');
+    notify('Company profile updated.');
   }catch(error){
-    notify('Could not update company name: '+error.message);
+    notify('Could not update company profile: '+error.message);
   }
 });
 document.addEventListener('keydown',e=>{
@@ -1150,6 +1255,9 @@ document.addEventListener('click',e=>{
 // Save failures stop submission handlers before their success messages.
 window.addEventListener('error',e=>{if(e.error){notify(e.error.message);}});
 window.addEventListener('focus',()=>{
+  // Native file pickers return focus before delivering the selected file.
+  // Replacing this form here detaches its input and loses that event.
+  if(document.querySelector('#company-profile-form'))return;
   if(database&&!document.querySelector('#modal').open){try{restoreDatabase();render();}catch(error){notify('Could not refresh records: '+error.message);}}
 });
 render();

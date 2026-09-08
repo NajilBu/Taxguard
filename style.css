@@ -79,6 +79,7 @@ dialog.report-modal{width:900px;max-width:96vw;max-height:92vh;overflow-y:auto}
 .report-analysis-textarea{width:100%;border:1px solid #c2d2e4;border-radius:8px;padding:14px 16px;font:inherit;font-size:13px;color:var(--ink);line-height:1.65;resize:vertical;background:#fff;min-height:150px;box-shadow:inset 0 1px 3px rgba(0,0,0,0.03);transition:border-color .15s ease,box-shadow .15s ease}.report-analysis-textarea:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(39,102,219,0.15)}
 .report-sheet{background:#fff;border:1px solid #d9e2ec;border-radius:9px;padding:26px 28px;display:flex;flex-direction:column;gap:20px;box-shadow:0 4px 20px rgba(17,43,70,0.05)}
 .sheet-header{border-bottom:2px solid var(--navy);padding-bottom:14px;display:flex;justify-content:space-between;align-items:flex-end;gap:16px}
+.company-logo-slot.has-company-logo{overflow:hidden;padding:0;background:#fff}.company-logo-slot img{width:100%;height:100%;display:block;object-fit:contain}.company-settings-panel .panel-head{padding-bottom:12px}.company-settings-panel .panel-body{padding-top:0}.company-profile-form{display:grid;grid-template-columns:minmax(420px,1.15fr) minmax(360px,1fr);gap:28px;align-items:end}.company-logo-editor{display:flex;align-items:center;gap:14px}.company-logo-editor>div:last-child{display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:0;flex:1}.company-logo-editor input{padding:7px;width:100%;max-width:390px}.company-logo-editor small{font-size:10px;color:var(--muted)}.company-logo-preview{width:68px;height:68px;flex:0 0 68px;border:1px dashed #bdcad8;border-radius:10px;background:#f7f9fc;color:#54708d;display:grid;place-items:center;font:800 19px Manrope,sans-serif;overflow:hidden}.company-logo-preview.has-logo{background:#fff}.company-logo-preview img{width:100%;height:100%;object-fit:contain}.company-name-editor{display:flex;align-items:flex-end;gap:10px;position:relative;padding-top:20px}.company-name-editor label{margin-top:0}.company-name-editor input{width:100%;min-width:220px}.company-name-editor>label{display:none}.company-name-editor:before{content:'Company / Firm Name';position:absolute;top:0;left:0;font-size:11px;color:#677b90}.company-name-editor .btn{white-space:nowrap}.sheet-company-heading{display:flex;align-items:center;gap:12px}.report-company-logo{width:48px;height:48px;object-fit:contain;border-radius:7px}.report-company-name{display:block;color:#61758a;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;margin-bottom:3px}@media(max-width:1050px){.company-profile-form{grid-template-columns:1fr;gap:16px;max-width:720px}}@media(max-width:550px){.company-logo-editor,.company-name-editor{align-items:stretch;flex-direction:column}.company-name-editor input{min-width:0}}
 .sheet-header h2{font:800 21px Manrope,sans-serif;color:var(--navy);margin:0 0 4px;letter-spacing:-.5px}
 .sheet-header p{margin:0;font-size:12px;color:var(--muted)}
 .sheet-meta{text-align:right;font-size:11px;color:#55697d;line-height:1.5}
@@ -892,3 +893,16 @@ body { background-color: #e4eaf1; }
 .report-card strong{display:block;font:700 14px Manrope,sans-serif;color:var(--ink);margin-bottom:5px}
 .report-card span{display:block;font-size:11.5px;color:var(--muted);line-height:1.5}
 .report-card:focus-visible{border-color:#3c7be6;box-shadow:0 0 0 3px rgba(60,123,230,.18)}
+.company-logo-error{color:#c36959!important;font-weight:600}
+.firm{gap:14px}
+.firm .avatar{width:60px;height:60px;flex:0 0 60px;font-size:20px}
+.firm .firm-info{min-width:0;font-size:14px;font-weight:600;line-height:1.4;overflow-wrap:anywhere}
+.firm .firm-info small{font-size:11px;font-weight:400;color:#a7bfd3}
+.company-logo-preview:focus-visible{outline:3px solid var(--blue);outline-offset:3px}
+.company-logo-editor input[hidden]{display:none}
+.company-logo-modal-preview{height:240px;display:grid;place-items:center;background:#f7f9fc;border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:36px;font-weight:700;color:var(--muted)}
+.company-logo-modal-preview img{width:100%;height:100%;max-height:240px;object-fit:contain}
+.company-profile-form{align-items:center}
+.company-logo-editor{flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center}
+.company-logo-editor>div:last-child{flex:0 1 auto;align-items:center}
+.company-logo-editor .company-logo-preview{width:120px;height:120px;flex:0 0 120px;border-radius:14px;padding:0;font-size:30px}
