@@ -23,7 +23,7 @@ else app.whenReady().then(async()=>{
   }
   db=new Store(filename,root);
   if(!smoke)seedSamples(db,root);
-  const valid=e=>e.senderFrame?.url===entry && e.senderFrame===e.sender.mainFrame;
+  const valid=e=>e.sender===win?.webContents && e.senderFrame===win.webContents.mainFrame;
   ipcMain.on('records:sync',(e,action,data,revision)=>{
     try{
       if(!valid(e))throw Error('Untrusted database request.');
@@ -99,6 +99,11 @@ else app.whenReady().then(async()=>{
   await win.loadFile(path.join(root,'index.html'));
   if(smoke){
     await win.webContents.executeJavaScript(`(async()=>{
+      if(getComputedStyle(document.querySelector('aside')).display!=='none')throw Error('Sidebar visible before login');
+      attemptLogin('admin','taxguard2026');
+      await new Promise(r=>setTimeout(r,550));
+      if(!document.body.classList.contains('logged-in'))throw Error('Desktop login failed');
+      if(getComputedStyle(document.querySelector('#login-landing')).display!=='none')throw Error('Landing still visible after login');
       go('clients');editClient();
       const f=document.querySelector('#client-form');
       f.elements.name.value='SQLite integration test';f.elements.tin.value='987-654-321-000';
