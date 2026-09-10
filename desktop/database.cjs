@@ -32,6 +32,7 @@ class Store {
     if(!cols.some(c=>c.name==='schedule_json')) this.db.exec("ALTER TABLE forms ADD COLUMN schedule_json TEXT NOT NULL DEFAULT '{}'");
     this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS unique_client_deadline ON filings(client_id,deadline_id); PRAGMA user_version=1;');
     this.db.exec("CREATE TABLE IF NOT EXISTS workspace_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL); INSERT OR IGNORE INTO workspace_meta VALUES('revision','0');");
+    this.db.exec('CREATE TABLE IF NOT EXISTS client_year_profiles(client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,tax_year INTEGER NOT NULL,profile_json TEXT NOT NULL,PRIMARY KEY(client_id,tax_year));');
     const defaults=JSON.parse(fs.readFileSync(path.join(root,'database/default-forms.json'),'utf8'));
     const insert=this.db.prepare('INSERT OR IGNORE INTO forms(code,name,frequency,schedule_json) VALUES(?,?,?,?)');
     const fill=this.db.prepare("UPDATE forms SET schedule_json=? WHERE code=? AND schedule_json='{}'");
@@ -52,6 +53,10 @@ class Store {
   load() {
     const forms=this.db.prepare('SELECT * FROM forms ORDER BY id').all().map(f=>({...JSON.parse(f.schedule_json),id:f.code,name:f.name,frequency:f.frequency}));
     const clients=this.db.prepare('SELECT * FROM clients ORDER BY id').all().map(c=>({id:c.id,name:c.name,tin:c.tin,type:c.business_type,tax:c.tax_type,status:c.status,start:c.start_of_filing,remarks:c.remarks,forms:this.db.prepare('SELECT f.code FROM client_forms cf JOIN forms f ON f.id=cf.form_id WHERE cf.client_id=?').all(c.id).map(f=>f.code)}));
+    for(const c of clients){
+      const profiles=this.db.prepare('SELECT tax_year,profile_json FROM client_year_profiles WHERE client_id=?').all(c.id);
+      if(profiles.length)c.yearProfiles=Object.fromEntries(profiles.map(p=>[p.tax_year,JSON.parse(p.profile_json)]));
+    }
     const filings={};
     for(const r of this.db.prepare('SELECT fi.*, f.code, d.tax_year, d.period FROM filings fi JOIN forms f ON f.id=fi.form_id JOIN deadlines d ON d.id=fi.deadline_id').all()) filings[`${r.client_id}:${r.tax_year}:${r.code}:${r.period}`]={date:r.filing_date,reference:r.reference_number,remarks:r.remarks};
     return {clients,filings,forms,revision:this.revision()};
@@ -99,6 +104,32 @@ class Store {
         if(!Array.isArray(c.forms))throw Error('Invalid required forms.');
         this.db.prepare('DELETE FROM client_forms WHERE client_id=?').run(c.id);
         for(const code of new Set(c.forms)){const f=this.db.prepare('SELECT id FROM forms WHERE code=?').get(code);if(!f)throw Error(`Unknown required form: ${code}`);this.db.prepare('INSERT INTO client_forms VALUES(?,?)').run(c.id,f.id);}
+        if(c.yearProfiles!==undefined&&(!c.yearProfiles||typeof c.yearProfiles!=='object'||Array.isArray(c.yearProfiles)))throw Error('Invalid yearly profiles.');
+        for(const [y,profile] of Object.entries(c.yearProfiles||{})){
+          if(!/^\d{4}$/.test(y)||Number(y)<1000||Number(y)>9998||!profile||!Array.isArray(profile.forms))throw Error('Invalid yearly requirements.');
+          if(!['VAT','NVAT'].includes(profile.tax))throw Error('Invalid yearly tax type.');
+          required(profile.type,'Yearly business type');
+          const clean={type:profile.type,tax:profile.tax,forms:[...new Set(profile.forms)],periods:{}};
+          for(const code of clean.forms){
+            const f=this.db.prepare('SELECT schedule_json FROM forms WHERE code=?').get(code);
+            if(!f)throw Error(`Unknown required form: ${code}`);
+            if(profile.periods?.[code]){
+              const periods=profile.periods[code],schedule=JSON.parse(f.schedule_json);
+              if(!Array.isArray(periods)||!periods.length||periods.some(p=>!schedule.periods.includes(p)))throw Error('Invalid yearly periods.');
+              clean.periods[code]=[...new Set(periods)];
+            }
+          }
+          for(const field of ['calendar','income','percentage','compensation','expanded']){
+            if(profile[field]!==undefined){if(typeof profile[field]!=='string'||profile[field].length>100)throw Error('Invalid registration choice.');clean[field]=profile[field];}
+          }
+          const recorded=this.db.prepare('SELECT f.code,d.period FROM filings fi JOIN forms f ON f.id=fi.form_id JOIN deadlines d ON d.id=fi.deadline_id WHERE fi.client_id=? AND d.tax_year=?').all(c.id,Number(y));
+          for(const [key] of Object.entries(state.filings)){const [cid,fy,code,period]=key.split(':');if(Number(cid)===c.id&&fy===y)recorded.push({code,period});}
+          for(const record of recorded){
+            if(!clean.forms.includes(record.code))throw Error(`Keep ${record.code} in ${y}: it has recorded filings.`);
+            if(clean.periods[record.code]&&!clean.periods[record.code].includes(record.period))throw Error(`Keep filed period ${record.period} for ${record.code} in ${y}.`);
+          }
+          this.db.prepare('INSERT INTO client_year_profiles VALUES(?,?,?) ON CONFLICT(client_id,tax_year) DO UPDATE SET profile_json=excluded.profile_json').run(c.id,Number(y),JSON.stringify(clean));
+        }
       }
       for(const [key,v] of Object.entries(state.filings)){
         const parts=key.split(':');if(parts.length!==4)throw Error('Invalid filing key.');

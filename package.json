@@ -8,7 +8,7 @@
     "start": "electron .",
     "build": "electron-builder",
     "build:win": "electron-builder --win",
-    "test": "node --test desktop/database.test.cjs desktop/api.test.cjs",
+    "test": "node --test desktop/database.test.cjs desktop/api.test.cjs desktop/allocation.test.cjs",
     "test:desktop": "electron . --smoke-test",
     "test:browser": "electron desktop/browser-smoke.cjs"
   },

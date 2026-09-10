@@ -192,4 +192,6 @@
     ],
     "frequency": "Annual"
   }
+  ,{"id":"1701A","name":"Annual income tax · Pure business / OSD or 8%","periods":["Annual"],"dates":["04-15"],"frequency":"Annual"}
+  ,{"id":"1702-RT","name":"Annual income tax · Regular-rate corporations","periods":["Annual"],"dates":["04-15"],"frequency":"Annual"}
 ]

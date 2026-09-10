@@ -6,6 +6,30 @@ const path=require('node:path');
 const {Store,scheduleDate}=require('./database.cjs');
 const {seedSamples}=require('./seed.cjs');
 const root=path.join(__dirname,'..');
+test('Compliance statuses agree across clients and filings at the due-date boundary',()=>{
+  const vm=require('node:vm');
+  const source=fs.readFileSync(path.join(root,'app.js'),'utf8');
+  const code=source.slice(source.indexOf('function complianceStatus('),source.indexOf('function render('));
+  const ctx=vm.createContext({today:'2026-09-10'});
+  vm.runInContext(code,ctx);
+  const client={id:1};
+  const yesterday={c:client,due:'2026-09-09'};
+  const dueToday={c:client,due:'2026-09-10'};
+  const future={c:client,due:'2026-09-11'};
+  assert.equal(ctx.status(client,[]),'N/A');
+  assert.equal(ctx.status(client,[dueToday,future]),'Pending');
+  assert.equal(ctx.status(client,[yesterday,future]),'Incomplete');
+  yesterday.filing={date:'2026-09-10'};
+  assert.equal(ctx.status(client,[yesterday,future]),'Pending');
+  future.filing={date:'2026-09-10'};
+  assert.equal(ctx.status(client,[yesterday,future]),'Complete');
+  assert.equal(ctx.status({id:2},[yesterday,future]),'N/A');
+  assert.equal(ctx.filingStatus(dueToday),'Pending');
+  ctx.today='2026-09-11';
+  assert.equal(ctx.filingStatus(dueToday),'Incomplete');
+  dueToday.filing={date:'2026-09-11'};
+  assert.equal(ctx.filingStatus(dueToday),'Complete');
+});
 function fixture(){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'taxguard-db-test-'));return {dir,file:path.join(dir,'taxguard.db')}}
 const client={id:1,name:'Test client',tin:'123-456-789-000',type:'Corporation',tax:'VAT',status:'Active',start:'2025-01-01',remarks:'Test',forms:['2550-Q']};
 test('Years outside the old range save, reopen, and retain deadline edits',()=>{

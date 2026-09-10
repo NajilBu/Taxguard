@@ -101,6 +101,10 @@ else app.whenReady().then(async()=>{
     try{win.webContents.executeJavaScript('sessionStorage.removeItem("taxguard_auth");localStorage.removeItem("taxguard_auth");');}catch(e){}
   });
   await win.loadFile(path.join(root,'index.html'));
+  if(smoke&&process.argv.includes('--allocation-test')){
+    await require('./allocation-smoke.cjs')(win,root);
+    app.quit();return;
+  }
   if(smoke){
     await win.webContents.executeJavaScript(`(async()=>{
       if(getComputedStyle(document.querySelector('aside')).display!=='none')throw Error('Sidebar visible before login');
@@ -137,8 +141,27 @@ else app.whenReady().then(async()=>{
       const loaded=window.taxguardDB.load();
       if(loaded.filings[c.id+':2026:2550-Q:Q1']?.reference!=='SQLITE-TEST')throw Error('Filing form did not persist');
       if(loaded.forms.find(f=>f.id==='2550-Q').overrides?.[2026]?.Q1!=='2026-04-28')throw Error('Deadline edit did not persist');
+      year=2026;go('clients');editClient(c.id);
+      const edit=document.querySelector('#client-form');
+      if(!edit.querySelector('[value="2550-Q"]').disabled)throw Error('Filed form can be removed');
+      edit.elements.tax.value='VAT';edit.elements.calendar.value='calendar';edit.elements.income.value='itemized';
+      edit.elements.compensation.value='no';edit.elements.expanded.value='yes';
+      document.querySelector('#suggest-client-forms').click();
+      if(edit.querySelector('[value="1701-Q"]').checked)throw Error('Suggestions applied before review');
+      document.querySelector('#apply-client-forms').click();
+      if(!edit.querySelector('[value="1701-Q"]').checked)throw Error('Suggestions not applied');
+      edit.requestSubmit();await new Promise(r=>setTimeout(r,240));
+      if(obligations().filter(o=>o.f.id==='0619-E').length!==8)throw Error('Expanded withholding allocation failed');
+      if(!getClientsReportData().rows[0][7].includes('1701-Q'))throw Error('Report uses old forms');
+      year=2025;
+      if(obligations().length!==0)throw Error('New assignment leaked into another year');
+      year=2026;
+      editClient(c.id);document.querySelector('#client-form').elements.name.value='Cancelled edit';
+      document.querySelector('#cancel').click();await new Promise(r=>setTimeout(r,240));
+      if(state.clients[0].name==='Cancelled edit')throw Error('Cancelled edit was saved');
     })()`);
     await win.loadFile(path.join(root,'index.html'));
+    await win.webContents.executeJavaScript(`year=2026;if(obligations().filter(o=>o.f.id==='0619-E').length!==8)throw Error('Year allocation lost after reload');`);
     await win.webContents.executeJavaScript(`(async()=>{go('settings');const image=document.querySelector('#company-logo-preview img');if(!image)throw Error('Saved logo missing after reload');await image.decode();if(!image.naturalWidth)throw Error('Saved logo did not decode');})()`);
     const result=await win.webContents.executeJavaScript(`({connected:!!window.taxguardDB,clients:state.clients.length,forms:forms.length,footer:document.querySelector('footer span').textContent,settings:(go('settings'),document.querySelector('#company-name-input')?.value==='Smoke Test Firm'&&!!document.querySelector('#company-logo-preview img'))})`);
     if(!result.connected||result.clients!==1||!result.forms||!result.settings)throw Error(JSON.stringify(result));

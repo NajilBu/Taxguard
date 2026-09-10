@@ -158,7 +158,7 @@ function getSummaryReportData(reportYear){
   const y=reportYear||year;
   const obs=obligations();
   const headers=['Client Name','TIN','Business Type','Tax Type','Client Status','Start of Filing',`Total Obligations (${y})`,'Completed Filings','Pending Filings','Overdue Filings','Compliance Rate','Annual Status'];
-  const rows=state.clients.map(c=>{
+  const rows=state.clients.map(c=>clientForYear(c)).map(c=>{
     const cObs=obs.filter(o=>o.c.id===c.id);
     const cDone=cObs.filter(o=>o.filing).length;
     const cOver=cObs.filter(o=>!o.filing&&o.due<today).length;
@@ -184,7 +184,7 @@ function getFilingsReportData(reportYear){
     o.p,
     y,
     o.due,
-    o.filing?'Completed':(o.due<today?'Overdue':'Pending'),
+    filingStatus(o),
     o.filing?.date||'',
     o.filing?.reference||'',
     o.filing?.remarks||''
@@ -194,7 +194,7 @@ function getFilingsReportData(reportYear){
 
 function getClientsReportData(){
   const headers=['Client ID','Client Name','TIN','Business Type','Tax Type','Status','Start of Filing','Required BIR Forms','Remarks'];
-  const rows=state.clients.map(c=>[
+  const rows=state.clients.map(c=>clientForYear(c)).map(c=>[
     c.id,
     c.name,
     c.tin,
@@ -305,7 +305,7 @@ function openReportPreview(reportType,reportYear){
     const onTime=obs.filter(o=>o.filing&&o.filing.date<=o.due).length;
     const late=done-onTime;
     const pct=obs.length?Math.round(done/obs.length*100):0;
-    reportBadge=pct>=100?'All Filed':(pct>=60?'Active Filing':'Filings Pending');
+    reportBadge=complianceStatus(obs);
 
     metricsHtml=`
       <div class="sheet-metric-box"><small>Total Obligations</small><strong>${obs.length}</strong></div>
@@ -368,7 +368,7 @@ function openReportPreview(reportType,reportYear){
         <td><strong>${esc(o.f.id)}</strong></td>
         <td>${esc(o.p)}</td>
         <td>${esc(o.due)}</td>
-        <td>${badge(o.filing?'complete':(o.due<today?'overdue':'pending'))}</td>
+        <td>${badge(filingStatus(o))}${!o.filing&&o.due<today?'<br><small>Overdue</small>':''}</td>
         <td>${esc(o.filing?.date||'—')}</td>
         <td><small>${esc(o.filing?.reference||'—')}</small></td>
       </tr>
@@ -386,12 +386,12 @@ function openReportPreview(reportType,reportYear){
     reportTitle='TAXGUARD CLIENT MASTER ROSTER';
     reportSub='Registered Taxpayer Directory, Entity Types & Statutory Form Assignments';
     const totalClients=state.clients.length;
-    const activeCount=state.clients.filter(c=>c.status==='Active').length;
-    const vatCount=state.clients.filter(c=>c.tax==='VAT').length;
-    const nvatCount=state.clients.filter(c=>c.tax==='NVAT').length;
-    const soleCount=state.clients.filter(c=>c.type==='Sole proprietorship').length;
-    const corpCount=state.clients.filter(c=>c.type==='Corporation').length;
-    const partCount=state.clients.filter(c=>c.type==='Partnership').length;
+    const activeCount=state.clients.map(c=>clientForYear(c)).filter(c=>c.status==='Active').length;
+    const vatCount=state.clients.map(c=>clientForYear(c)).filter(c=>c.tax==='VAT').length;
+    const nvatCount=state.clients.map(c=>clientForYear(c)).filter(c=>c.tax==='NVAT').length;
+    const soleCount=state.clients.map(c=>clientForYear(c)).filter(c=>c.type==='Sole proprietorship').length;
+    const corpCount=state.clients.map(c=>clientForYear(c)).filter(c=>c.type==='Corporation').length;
+    const partCount=state.clients.map(c=>clientForYear(c)).filter(c=>c.type==='Partnership').length;
     reportBadge=`${activeCount} Active Entities`;
 
     metricsHtml=`
@@ -450,7 +450,7 @@ function openReportPreview(reportType,reportYear){
         <th>Required BIR Forms</th>
       </tr>
     `;
-    tableRowsHtml=state.clients.map(c=>`
+    tableRowsHtml=state.clients.map(c=>clientForYear(c)).map(c=>`
       <tr>
         <td><strong>${esc(c.name)}</strong></td>
         <td><small class="subtle">${esc(c.tin)}</small></td>
@@ -478,7 +478,7 @@ function openReportPreview(reportType,reportYear){
     const over=obs.filter(o=>!o.filing&&o.due<today).length;
     const pending=obs.length-done-over;
     const pct=obs.length?Math.round(done/obs.length*100):0;
-    reportBadge=pct>=100?'Fully Compliant':(pct>=70?'Satisfactory':'Action Required');
+    reportBadge=complianceStatus(obs);
 
     metricsHtml=`
       <div class="sheet-metric-box"><small>Total Obligations</small><strong>${obs.length}</strong></div>
@@ -527,7 +527,7 @@ function openReportPreview(reportType,reportYear){
         <th>Status</th>
       </tr>
     `;
-    tableRowsHtml=state.clients.map(c=>{
+    tableRowsHtml=state.clients.map(c=>clientForYear(c)).map(c=>{
       const cObs=obs.filter(o=>o.c.id===c.id);
       const cDone=cObs.filter(o=>o.filing).length;
       const cOver=cObs.filter(o=>!o.filing&&o.due<today).length;
