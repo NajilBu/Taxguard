@@ -8,6 +8,31 @@ const {seedSamples}=require('./seed.cjs');
 const root=path.join(__dirname,'..');
 function fixture(){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'taxguard-db-test-'));return {dir,file:path.join(dir,'taxguard.db')}}
 const client={id:1,name:'Test client',tin:'123-456-789-000',type:'Corporation',tax:'VAT',status:'Active',start:'2025-01-01',remarks:'Test',forms:['2550-Q']};
+test('Years outside the old range save, reopen, and retain deadline edits',()=>{
+  const {file}=fixture();let s=new Store(file,root);
+  const filings={};
+  for(const y of [2010,2035])filings[`1:${y}:2550-Q:Q4`]={date:`${y+1}-01-20`,reference:'YEAR-TEST'};
+  s.saveState({clients:[{...client,start:'2010-01-01'}],filings});
+  const forms=s.load().forms;forms.find(f=>f.id==='2550-Q').overrides={2035:{Q4:'2036-01-29'}};
+  s.saveForms(forms);s.close();s=new Store(file,root);
+  assert.equal(Object.keys(s.load().filings).length,2);
+  assert.equal(s.db.prepare("SELECT due_date FROM deadlines d JOIN forms f ON f.id=d.form_id WHERE f.code='2550-Q' AND tax_year=2035 AND period='Q4'").get().due_date,'2036-01-29');
+  s.close();
+});
+test('Local date rollover updates overdue logic without replacing an edited profile',()=>{
+  const vm=require('node:vm');
+  const source=fs.readFileSync(path.join(root,'app.js'),'utf8');
+  const functions=source.slice(source.indexOf('function localDate('),source.indexOf('setInterval(refreshCurrentDate'));
+  const context=vm.createContext({Date, today:'2026-09-09',renders:0,editing:false,document:{querySelector:selector=>selector==='#company-profile-form'&&context.editing?{}:null},render:()=>context.renders++});
+  vm.runInContext(functions,context);
+  assert.equal(vm.runInContext('localDate(new Date(2026,0,1,0,1))',context),'2026-01-01');
+  vm.runInContext("localDate=()=> '2026-09-10';refreshCurrentDate()",context);
+  assert.equal(context.today,'2026-09-10');assert.equal(context.renders,1);
+  assert.equal(vm.runInContext("'2026-09-09'<today && !('2026-09-10'<today)",context),true);
+  context.editing=true;
+  vm.runInContext("localDate=()=> '2026-09-11';refreshCurrentDate()",context);
+  assert.equal(context.today,'2026-09-11');assert.equal(context.renders,1);
+});
 test('SQLite survives reopen: client, assignments, filing, deadline override',()=>{
   const {file}=fixture();let s=new Store(file,root);
   const state={clients:[client],filings:{'1:2026:2550-Q:Q1':{date:'2026-04-20',reference:'TEST-1',remarks:'Filed'}}};

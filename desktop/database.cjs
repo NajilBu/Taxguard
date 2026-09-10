@@ -75,7 +75,8 @@ class Store {
         const frequency=f.frequency||(f.periods[0]==='Annual'?'Annual':f.id==='1601-C'?'Monthly':'Quarterly');
         this.db.prepare('INSERT INTO forms(code,name,frequency,schedule_json) VALUES(?,?,?,?) ON CONFLICT(code) DO UPDATE SET name=excluded.name,frequency=excluded.frequency,schedule_json=excluded.schedule_json').run(f.id,f.name,frequency,JSON.stringify(f));
         const fid=this.db.prepare('SELECT id FROM forms WHERE code=?').get(f.id).id;
-        const years=new Set([...Array.from({length:10},(_,i)=>2018+i),...Object.keys(f.overrides||{}).map(Number)]);
+        const currentYear=new Date().getFullYear();
+        const years=new Set([currentYear-1,currentYear,currentYear+1,...this.db.prepare('SELECT DISTINCT tax_year FROM deadlines WHERE form_id=?').all(fid).map(d=>d.tax_year),...Object.keys(f.overrides||{}).map(Number)]);
         for(const y of years)for(const p of f.periods){const due=scheduleDate(f,p,y);if(!date(due))throw Error(`Invalid due date for ${f.id}, ${p}: ${due}`);this.db.prepare('INSERT INTO deadlines(form_id,tax_year,period,due_date) VALUES(?,?,?,?) ON CONFLICT(form_id,tax_year,period) DO UPDATE SET due_date=excluded.due_date').run(fid,y,p,due);}
       }
       this.bumpRevision();
@@ -101,7 +102,19 @@ class Store {
       }
       for(const [key,v] of Object.entries(state.filings)){
         const parts=key.split(':');if(parts.length!==4)throw Error('Invalid filing key.');
-        const [cid,y,code,p]=parts;const d=this.db.prepare('SELECT d.id,d.form_id FROM deadlines d JOIN forms f ON f.id=d.form_id WHERE f.code=? AND d.tax_year=? AND d.period=?').get(code,Number(y),p);
+        const [cid,y,code,p]=parts;
+        const filingYear=Number(y);
+        if(!Number.isInteger(filingYear)||filingYear<1000||filingYear>9998)throw Error('Invalid tax year.');
+        let d=this.db.prepare('SELECT d.id,d.form_id FROM deadlines d JOIN forms f ON f.id=d.form_id WHERE f.code=? AND d.tax_year=? AND d.period=?').get(code,filingYear,p);
+        if(!d){
+          const form=this.db.prepare('SELECT id,schedule_json FROM forms WHERE code=?').get(code);
+          const schedule=form&&JSON.parse(form.schedule_json);
+          if(!schedule?.periods.includes(p))throw Error(`Invalid filing record: ${key}`);
+          const due=scheduleDate(schedule,p,filingYear);
+          if(!date(due))throw Error('Invalid deadline date.');
+          const inserted=this.db.prepare('INSERT INTO deadlines(form_id,tax_year,period,due_date) VALUES(?,?,?,?)').run(form.id,filingYear,p,due);
+          d={id:inserted.lastInsertRowid,form_id:form.id};
+        }
         if(!d||!ids.has(Number(cid))||!date(v.date))throw Error(`Invalid filing record: ${key}`);
         this.db.prepare("INSERT INTO filings(client_id,form_id,deadline_id,filing_date,reference_number,remarks,status) VALUES(?,?,?,?,?,?,'Complete') ON CONFLICT(client_id,deadline_id) DO UPDATE SET filing_date=excluded.filing_date,reference_number=excluded.reference_number,remarks=excluded.remarks,status='Complete'").run(Number(cid),d.form_id,d.id,v.date,v.reference||'',v.remarks||'');
       }
