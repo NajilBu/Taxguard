@@ -169,9 +169,13 @@ function getSummaryReportData(reportYear){
   return { title:`TaxGuard-Compliance-Summary-${y}.xls`, headers, rows, obs };
 }
 
+function sortReportByDueDate(records){
+  return [...records].sort((a,b)=>a.due.localeCompare(b.due)||a.c.name.localeCompare(b.c.name)||a.f.id.localeCompare(b.f.id)||a.p.localeCompare(b.p));
+}
+
 function getFilingsReportData(reportYear){
   const y=reportYear||year;
-  const obs=obligations();
+  const obs=sortReportByDueDate(obligations());
   const headers=['Client Name','TIN','BIR Form','Covered Period','Tax Year','Due Date','Filing Status','Filing Date','Confirmation / Reference','Remarks'];
   const rows=obs.map(o=>[
     o.c.name,
@@ -274,7 +278,7 @@ function openReportPreview(reportType,reportYear){
   const y=reportYear||year;
   const m=document.querySelector('#modal');
   if(!m)return;
-  const obs=obligations();
+  const obs=sortReportByDueDate(obligations());
   const todayFormatted=new Date().toLocaleDateString('en-PH',{year:'numeric',month:'short',day:'numeric'});
 
   m.classList.add('report-modal');
@@ -551,6 +555,8 @@ function openReportPreview(reportType,reportYear){
     };
   }
 
+  const companyProfile=getWorkspaceCompanyProfile();
+  const reportCompanyLogo=companyProfile.logo?`<img class="report-company-logo" src="${companyProfile.logo}" alt="${esc(companyProfile.name)} logo">`:'';
   m.innerHTML=`<div class="report-preview-wrap">
     <div class="preview-toolbar no-print">
       <div class="preview-toolbar-title">
@@ -573,9 +579,13 @@ function openReportPreview(reportType,reportYear){
 
     <div class="report-sheet">
       <div class="sheet-header">
-        <div>
+        <div class="sheet-company-heading">
+          ${reportCompanyLogo}
+          <div>
+          <small class="report-company-name">${esc(companyProfile.name)}</small>
           <h2>${reportTitle}</h2>
           <p>${reportSub}</p>
+          </div>
         </div>
         <div class="sheet-meta">
           <strong>TAX YEAR: ${y}</strong><br>
@@ -660,6 +670,67 @@ function getCurrentUserAuth(){
   }
 }
 
+function getWorkspaceCompanyName(){
+  if(window.taxguardDB?.getCompanyName){
+    try{return window.taxguardDB.getCompanyName();}catch(e){}
+  }
+  return localStorage.getItem('taxguard_company_name')||getCurrentUserAuth().company||'EOO Tax & Accounting';
+}
+
+function getWorkspaceCompanyProfile(){
+  if(window.taxguardDB?.getCompanyProfile){
+    try{return window.taxguardDB.getCompanyProfile();}catch(e){}
+  }
+  return {name:getWorkspaceCompanyName(),logo:localStorage.getItem('taxguard_company_logo')||''};
+}
+let companyProfileDraft=null;
+
+function setCompanyLogoSlot(element,logo,company){
+  if(!element)return;
+  element.classList.add('company-logo-slot');
+  if(logo){
+    element.innerHTML=`<img src="${logo}" alt="${esc(company)} logo">`;
+    element.classList.add('has-company-logo');
+  }else{
+    element.textContent=getUserInitials(company);
+    element.classList.remove('has-company-logo');
+  }
+}
+
+function applyWorkspaceCompanyProfile(profile){
+  const company=profile.name;
+  const currentAuth=getCurrentUserAuth();
+  const updatedAuth={...currentAuth,company};
+  sessionStorage.setItem('taxguard_auth',JSON.stringify(updatedAuth));
+  const firmEl=document.querySelector('.firm .firm-info');
+  if(firmEl)firmEl.innerHTML=`${esc(company)}<small>Compliance team</small>`;
+  const loginDisplay=document.querySelector('#login-company-display');
+  if(loginDisplay)loginDisplay.textContent=company;
+  setCompanyLogoSlot(document.querySelector('.firm .avatar'),profile.logo,company);
+  setCompanyLogoSlot(document.querySelector('.firm-chip .avatar'),profile.logo,company);
+}
+
+function persistWorkspaceCompanyProfile(profile){
+  const saved=window.taxguardDB?.saveCompanyProfile
+    ?window.taxguardDB.saveCompanyProfile(profile)
+    :profile;
+  if(!window.taxguardDB){
+    localStorage.setItem('taxguard_company_name',saved.name);
+    localStorage.setItem('taxguard_company_logo',saved.logo||'');
+    const users=fetchWorkstationUsers().map(user=>({...user,company_name:saved.name}));
+    localStorage.setItem('taxguard_users',JSON.stringify(users));
+  }
+  applyWorkspaceCompanyProfile(saved);
+  return saved;
+}
+
+function persistWorkspaceCompanyName(company){
+  return persistWorkspaceCompanyProfile({...getWorkspaceCompanyProfile(),name:company}).name;
+}
+
+applyWorkspaceCompanyProfile(getWorkspaceCompanyProfile());
+window.refreshCompanyProfile=()=>applyWorkspaceCompanyProfile(getWorkspaceCompanyProfile());
+
 function fetchWorkstationUsers(){
   if(window.taxguardDB?.getUsers){
     try{const res=window.taxguardDB.getUsers();if(Array.isArray(res))return res;}catch(e){}
@@ -725,6 +796,7 @@ function openUserAccountModal(userId,initialData=null){
 
   const totalActive=users.filter(u=>u.is_active).length;
   const cannotDeactivate=isEditing&&user.is_active&&totalActive<=1;
+  const canDelete=isEditing&&!isCurrent&&!(user.is_active&&totalActive<=1);
 
   const usernameVal=initialData?.username!==undefined?initialData.username:(user?.username||'');
   const companyVal=initialData?.company_name!==undefined?initialData.company_name:(user?.company_name||'EOO Tax & Accounting');
@@ -775,6 +847,7 @@ function openUserAccountModal(userId,initialData=null){
       <div id="user-modal-error-alert" style="display:none;background:#fff0ee;border:1px solid #fed7d7;color:#c36959;padding:9px 13px;border-radius:6px;font-size:12px;margin-top:14px"></div>
 
       <div class="modal-actions">
+        ${canDelete?'<button type="button" class="btn danger-btn" id="delete-user-from-modal">Delete account</button>':''}
         <button type="button" class="btn" id="cancel-user-modal">Cancel</button>
         <button type="submit" class="btn primary" id="save-user-btn">${isEditing?'Save changes':'Create account'}</button>
       </div>
@@ -801,6 +874,12 @@ function openUserAccountModal(userId,initialData=null){
     try{m.close();}catch(e){}
     m.classList.remove('closing');
     m.innerHTML='';
+  });
+  m.querySelector('#delete-user-from-modal')?.addEventListener('click',()=>{
+    closeModal(m,()=>{
+      m.innerHTML='';
+      confirmDeleteUser(user.id,user.username);
+    });
   });
   m.querySelector('#user-account-form')?.addEventListener('submit',e=>{
     e.preventDefault();
@@ -997,8 +1076,11 @@ settings=function(){
 
   const users=fetchWorkstationUsers();
   const currentAuth=getCurrentUserAuth();
-  const totalActiveUsers=users.filter(u=>u.is_active).length;
-
+  const companyProfile=companyProfileDraft||getWorkspaceCompanyProfile();
+  const companyName=companyProfile.name;
+  const companyLogoPreview=companyProfile.logo
+    ?`<img src="${companyProfile.logo}" alt="${esc(companyName)} logo">`
+    :`<span>${esc(getUserInitials(companyName))}</span>`;
   const usersRowsHtml=users.map(u=>{
     const isCurrent=u.username.toLowerCase()===currentAuth.username.toLowerCase();
     const initials=getUserInitials(u.username);
@@ -1009,7 +1091,7 @@ settings=function(){
       Auditor:{bg:'#fffbeb',text:'#b45309',border:'#fde68a'}
     }[u.role]||{bg:'#edf2f7',text:'#334e68',border:'#cbd5e1'};
 
-    return `<tr>
+    return `<tr class="user-account-row" data-user-id="${u.id}" role="button" tabindex="0" aria-label="Edit user ${esc(u.username)}">
       <td style="padding:12px 16px">
         <div style="display:flex;align-items:center;gap:10px">
           <span class="avatar" style="width:30px;height:30px;min-width:30px;font-size:11px;font-weight:700;background:#e2e8f0;color:#334e68">${initials}</span>
@@ -1026,33 +1108,61 @@ settings=function(){
       <td style="padding:12px 16px">
         ${u.is_active?'<span class="badge active">Active</span>':'<span class="badge inactive">Inactive</span>'}
       </td>
-      <td style="padding:12px 16px;text-align:right">
-        <button type="button" class="btn btn-edit-user" data-user-id="${u.id}" style="padding:5px 12px;font-size:11px;margin-right:6px">Edit</button>
-        ${isCurrent
-          ? '<button type="button" class="btn" disabled title="Cannot delete currently active account" style="padding:5px 10px;font-size:11px;opacity:0.35;cursor:not-allowed">Delete</button>'
-          : (u.is_active&&totalActiveUsers<=1
-            ? '<button type="button" class="btn" disabled title="Cannot delete the only active account" style="padding:5px 10px;font-size:11px;opacity:0.35;cursor:not-allowed">Delete</button>'
-            : `<button type="button" class="btn btn-delete-user" data-user-id="${u.id}" data-username="${esc(u.username)}" style="padding:5px 10px;font-size:11px;color:#c36959">Delete</button>`
-          )
-        }
-      </td>
     </tr>`;
   }).join('');
 
-  return heading('Settings','Personalize the TaxGuard workspace.','')+`<div class="settings-grid"><div class="panel settings-panel"><div class="panel-head"><div><h2>Color theme</h2><p>Choose a preset workspace accent color.</p></div></div><div class="theme-options">${[['blue','Blue'],['navy','Navy'],['green','Green'],['purple','Purple'],['orange','Orange'],['red','Red']].map(([v,l])=>`<button class="theme-option ${current===v?'active':''}" data-theme="${v}"><span class="theme-swatch ${v}"></span><span>${l}</span>${current===v?'<b>✓</b>':''}</button>`).join('')}</div></div><div class="panel storage-panel"><div class="panel-head"><div><h2>Data storage</h2><p>${database?'Client records and filings are saved in SQLite, shared by localhost and the desktop app.':'This browser stores records locally. The localhost version connects to SQLite.'}</p></div></div><div class="panel-body"><div class="storage-features"><div class="storage-feature-item"><small>Engine</small><strong>${database?'SQLite station':'Browser storage'}</strong></div><div class="storage-feature-item"><small>Scope</small><strong>Clients &amp; filings</strong></div><div class="storage-feature-item"><small>Format</small><strong>JSON v1 archive</strong></div></div><div class="storage-actions"><button class="btn" id="export-records">Export records</button> ${database?.importRecords&&state.clients.length===0?'<button class="btn primary" id="import-records">Import browser records</button>':''}</div></div></div></div><div class="panel users-panel" style="margin-top:24px"><div class="panel-head"><div><h2>User Account Management</h2><p>Manage workstation credentials, update current user info, and create new user accounts.</p></div><div style="display:flex;align-items:center;gap:12px"><span class="subtle">${users.length} configured account${users.length===1?'':'s'}</span><button type="button" class="btn primary" id="btn-add-user" style="padding:7px 14px;font-size:11.5px">+ Add user account</button></div></div><div class="panel-body" style="padding:0"><div class="table-scroll"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="border-bottom:1px solid var(--line);background:#f8fafc"><th style="padding:10px 16px;text-align:left;font-size:9.5px;text-transform:uppercase;color:#64748b">User Account</th><th style="padding:10px 16px;text-align:left;font-size:9.5px;text-transform:uppercase;color:#64748b">Firm / Display Name</th><th style="padding:10px 16px;text-align:left;font-size:9.5px;text-transform:uppercase;color:#64748b">Role</th><th style="padding:10px 16px;text-align:left;font-size:9.5px;text-transform:uppercase;color:#64748b">Status</th><th style="padding:10px 16px;text-align:right;font-size:9.5px;text-transform:uppercase;color:#64748b">Actions</th></tr></thead><tbody>${usersRowsHtml}</tbody></table></div></div></div><div class="panel reports-panel" style="margin-top:24px"><div class="panel-head"><div><h2>Compliance &amp; Audit Reports</h2><p>Click any report card below to open its executive preview with visual charts, custom commentary, and PDF export.</p></div><span class="subtle">${year} TAX YEAR</span></div><div class="panel-body"><div class="report-stat-strip"><div class="report-stat-card"><small>Total obligations (${year})</small><strong>${obs.length}</strong></div><div class="report-stat-card"><small>Filings completed</small><strong style="color:var(--green)">${done}</strong></div><div class="report-stat-card"><small>Compliance rate</small><strong>${pct}%</strong></div><div class="report-stat-card"><small>Overdue items</small><strong style="color:${over>0?'#c36959':'var(--ink)'}">${over}</strong></div></div><div class="reports-grid"><div class="report-card" id="open-report-preview" data-report="summary" data-export-id="export-summary-report" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📊</span><div><strong>Annual Compliance Summary</strong><small>Client compliance standing, completion percentage, and obligation counts for ${year}.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; save PDF &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF Report</span></div></div><div class="report-card" id="export-filings-report" data-report="filings" data-export-id="export-filings-report" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📑</span><div><strong>Filing Audit Log</strong><small>Detailed submission trail with BIR confirmation numbers, filing dates, and periods.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; save PDF &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF Report</span></div></div><div class="report-card" id="export-clients-report" data-report="clients" data-export-id="export-clients-report" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">👥</span><div><strong>Client Master Roster</strong><small>Complete directory of registered taxpayers, TINs, tax types, and required BIR forms.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; save PDF &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF Report</span></div></div></div></div></div>`;
+  return heading('Settings','Personalize the TaxGuard workspace.','')+`
+    <div class="panel company-settings-panel" style="margin-bottom:24px">
+      <div class="panel-head"><div><h2>Company Profile</h2><p>Set the firm name and logo shown throughout this workspace and in reports.</p></div></div>
+      <div class="panel-body">
+        <form id="company-profile-form" class="company-profile-form">
+          <div class="company-name-editor"><label for="company-name-input" style="margin-top:0">Company / Firm Name</label><input id="company-name-input" name="company_name" required maxlength="120" value="${esc(companyName)}"><button type="submit" class="btn primary">Save company profile</button></div>
+          <div class="company-logo-editor">
+            <button type="button" class="company-logo-preview ${companyProfile.logo?'has-logo':''}" id="company-logo-preview" aria-label="Preview or change company logo" title="Preview or change company logo">${companyLogoPreview}</button>
+            <div><span>Company Logo</span><small>Click the logo to preview or change it.</small><input id="company-logo-input" name="company_logo" type="file" hidden accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/x-icon,image/vnd.microsoft.icon,.jpg,.jpeg,.jfif,.ico"><small id="company-logo-error" class="company-logo-error" aria-live="polite"></small></div>
+          </div>
+        </form>
+      </div>
+    </div>
+    <div class="settings-grid">
+      <div class="panel settings-panel">
+        <div class="panel-head"><div><h2>Color theme</h2><p>Choose a preset workspace accent color.</p></div></div>
+        <div class="theme-options">${[['blue','Blue'],['navy','Navy'],['green','Green'],['purple','Purple'],['orange','Orange'],['red','Red']].map(([v,l])=>`<button class="theme-option ${current===v?'active':''}" data-theme="${v}"><span class="theme-swatch ${v}"></span><span>${l}</span>${current===v?'<b>✓</b>':''}</button>`).join('')}</div>
+      </div>
+      <div class="panel storage-panel"><div class="panel-head"><div><h2>Data storage</h2><p>${database?'Client records and filings are saved in SQLite, shared by localhost and the desktop app.':'Records are saved in this browser.'}</p></div></div><div class="panel-body storage-actions"><button type="button" class="btn secondary" id="export-records">Export records</button>${database?.importRecords&&state.clients.length===0?'<button type="button" class="btn secondary" id="import-records">Import browser records</button>':''}</div></div>
+    </div>
+    <div class="panel users-panel" style="margin-top:24px"><div class="panel-head"><div><h2>User Account Management</h2><p>Manage workstation accounts.</p></div><button type="button" class="btn primary" id="btn-add-user">+ Add user account</button></div><div class="panel-body" style="padding:0"><div class="table-scroll"><table><thead><tr><th>User account</th><th>Firm / display name</th><th>Role</th><th>Status</th></tr></thead><tbody>${usersRowsHtml}</tbody></table></div></div></div>
+    <div class="panel reports-panel" style="margin-top:24px"><div class="panel-head"><div><h2>Compliance &amp; Audit Reports</h2><p>Click any report card below to open its executive preview with visual charts, custom commentary, and PDF export.</p></div><span class="subtle">${year} TAX YEAR</span></div><div class="panel-body"><div class="report-stat-strip"><div class="report-stat-card"><small>Total obligations (${year})</small><strong>${obs.length}</strong></div><div class="report-stat-card"><small>Filings completed</small><strong style="color:var(--green)">${done}</strong></div><div class="report-stat-card"><small>Compliance rate</small><strong>${pct}%</strong></div><div class="report-stat-card"><small>Overdue items</small><strong style="color:${over>0?'#c36959':'var(--ink)'}">${over}</strong></div></div><div class="reports-grid"><div class="report-card" id="open-report-preview" data-report="summary" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📊</span><div><strong>Annual Compliance Summary</strong><small>Client compliance standing, completion percentage, and obligation counts for ${year}.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; save PDF &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF Report</span></div></div><div class="report-card" id="export-filings-report" data-report="filings" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📑</span><div><strong>Filing Audit Log</strong><small>Detailed submission trail with BIR confirmation numbers, filing dates, and periods.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; save PDF &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF Report</span></div></div><div class="report-card" id="export-clients-report" data-report="clients" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">👥</span><div><strong>Client Master Roster</strong><small>Complete directory of registered taxpayers, TINs, tax types, and required BIR forms.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; save PDF &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF Report</span></div></div></div></div></div>`;
 };
 document.querySelector('footer span').textContent=database?'Saved to SQLite on this computer':'Changes saved in this browser';
 document.addEventListener('click',async e=>{
+  if(e.target.closest('#company-logo-preview')){
+    const profile=companyProfileDraft||getWorkspaceCompanyProfile();
+    const m=document.querySelector('#modal');
+    m.classList.remove('report-modal','closing');
+    m.innerHTML=`<h2>Company logo</h2><p>PNG, JPEG, WebP, GIF, BMP, or ICO. Maximum 5 MB.</p><div id="company-logo-modal-preview" class="company-logo-modal-preview">${profile.logo?`<img src="${profile.logo}" alt="Company logo">`:esc(getUserInitials(profile.name))}</div><p id="company-logo-modal-status" role="status">Changes are saved with Save company profile.</p><div class="modal-actions"><button type="button" class="btn" id="remove-company-logo">Remove logo</button><button type="button" class="btn primary" id="change-company-logo">Change logo</button><button type="button" class="btn" id="close-company-logo">Close</button></div>`;
+    m.querySelector('#change-company-logo').onclick=()=>document.querySelector('#company-logo-input').click();
+    m.querySelector('#close-company-logo').onclick=()=>closeModal(m);
+    m.showModal();
+    return;
+  }
+  if(e.target.closest('#remove-company-logo')){
+    const company=String(document.querySelector('#company-name-input')?.value||getWorkspaceCompanyName()).trim();
+    companyProfileDraft={name:company,logo:''};
+    const preview=document.querySelector('#company-logo-preview');
+    if(preview){preview.textContent=getUserInitials(company);preview.classList.remove('has-logo');}
+    const largePreview=document.querySelector('#company-logo-modal-preview');
+    if(largePreview)largePreview.textContent=getUserInitials(company);
+    document.querySelector('#company-logo-input').value='';
+    e.target.closest('#remove-company-logo').remove();
+    return;
+  }
   if(e.target.closest('#btn-add-user')){
     openUserAccountModal(null);
   }
-  const editBtn=e.target.closest('.btn-edit-user');
-  if(editBtn){
-    openUserAccountModal(editBtn.dataset.userId);
-  }
-  const delBtn=e.target.closest('.btn-delete-user');
-  if(delBtn){
-    confirmDeleteUser(delBtn.dataset.userId, delBtn.dataset.username);
+  const userRow=e.target.closest('.user-account-row');
+  if(userRow){
+    openUserAccountModal(userRow.dataset.userId);
   }
   if(e.target.closest('#export-records')){
     const payload={format:'taxguard-export-v1',state,forms};
@@ -1067,8 +1177,68 @@ document.addEventListener('click',async e=>{
     openReportPreview(reportCard.dataset.report,year);
   }
 });
+document.addEventListener('change',e=>{
+  if(e.target.id!=='company-logo-input'||!e.target.files?.[0])return;
+  const file=e.target.files[0];
+  const company=String(document.querySelector('#company-name-input')?.value||getWorkspaceCompanyName()).trim();
+  const extension=file.name.split('.').pop()?.toLowerCase();
+  const inferredMime={png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',jfif:'image/jpeg',webp:'image/webp',gif:'image/gif',bmp:'image/bmp',ico:'image/x-icon'}[extension];
+  const logoMime=file.type||inferredMime;
+  const allowed=['image/png','image/jpeg','image/webp','image/gif','image/bmp','image/x-icon','image/vnd.microsoft.icon'];
+  const error=document.querySelector('#company-logo-error');
+  if(file.size>5*1024*1024||!allowed.includes(logoMime)){
+    const message=file.size>5*1024*1024?'The selected logo is larger than 5 MB.':'That image format is not supported. Choose PNG, JPEG, WebP, GIF, BMP, or ICO.';
+    if(error)error.textContent=message;
+    const status=document.querySelector('#company-logo-modal-status');if(status)status.textContent=message;
+    notify(message);companyProfileDraft={...(companyProfileDraft||getWorkspaceCompanyProfile()),name:company};return;
+  }
+  if(error)error.textContent='';
+  const reader=new FileReader();
+  reader.onload=async()=>{
+    const dataUrl=String(reader.result).replace(/^data:[^;]*;/,`data:${logoMime};`);
+    const image=new Image();
+    image.src=dataUrl;
+    try{await image.decode();}catch{
+      const message='This image could not be opened. Choose another picture.';
+      if(error)error.textContent=message;
+      const status=document.querySelector('#company-logo-modal-status');if(status)status.textContent=message;
+      return;
+    }
+    companyProfileDraft={name:document.querySelector('#company-name-input')?.value??company,logo:dataUrl};
+    const preview=document.querySelector('#company-logo-preview');
+    if(preview){image.alt='Company logo preview';preview.replaceChildren(image);preview.classList.add('has-logo');}
+    const modal=document.querySelector('#modal');
+    if(modal?.open&&modal.querySelector('#company-logo-modal-preview'))closeModal(modal);
+  };
+  reader.onerror=()=>notify('Could not read the selected logo.');
+  reader.readAsDataURL(file);
+});
+document.addEventListener('input',e=>{
+  if(e.target.id!=='company-name-input')return;
+  companyProfileDraft={...(companyProfileDraft||getWorkspaceCompanyProfile()),name:e.target.value};
+});
+document.addEventListener('submit',async e=>{
+  if(e.target.id!=='company-profile-form')return;
+  e.preventDefault();
+  const company=String(new FormData(e.target).get('company_name')||'').trim();
+  try{
+    const logo=(companyProfileDraft||getWorkspaceCompanyProfile()).logo;
+    persistWorkspaceCompanyProfile({name:company,logo});
+    companyProfileDraft=null;
+    render();
+    notify('Company profile updated.');
+  }catch(error){
+    notify('Could not update company profile: '+error.message);
+  }
+});
 document.addEventListener('keydown',e=>{
   if(e.key==='Enter'||e.key===' '){
+    const userRow=document.activeElement?.closest?.('.user-account-row');
+    if(userRow){
+      e.preventDefault();
+      openUserAccountModal(userRow.dataset.userId);
+      return;
+    }
     const card=document.activeElement?.closest?.('.report-card[data-report]');
     if(card){
       e.preventDefault();
@@ -1085,6 +1255,79 @@ document.addEventListener('click',e=>{
 // Save failures stop submission handlers before their success messages.
 window.addEventListener('error',e=>{if(e.error){notify(e.error.message);}});
 window.addEventListener('focus',()=>{
+  // Native file pickers return focus before delivering the selected file.
+  // Replacing this form here detaches its input and loses that event.
+  if(document.querySelector('#company-profile-form'))return;
   if(database&&!document.querySelector('#modal').open){try{restoreDatabase();render();}catch(error){notify('Could not refresh records: '+error.message);}}
 });
 render();
+// Scroll reveal is self-contained so it can be removed without changing page layouts.
+(() => {
+  const content = document.querySelector('#content');
+  if (!content || !Element.prototype.animate) return;
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const active = new Map();
+  const entrances = new Map();
+  let frame = 0, printing = false;
+  function update() {
+    frame = 0;
+    const height = window.innerHeight;
+    const band = Math.min(180, height * .22);
+    // Top-anchored scaling keeps this measurement stable as the card expands.
+    const positions = [...active].map(([card, animation]) => [card, animation, card.getBoundingClientRect().top]);
+    for (const [card, animation, top] of positions) {
+      const progress = card.contains(document.activeElement) ? 1 : Math.max(0, Math.min(1, (height - top) / band));
+      animation.currentTime = progress * 1000;
+    }
+  }
+  function scheduleUpdate() { if (!frame) frame = requestAnimationFrame(update); }
+  function observeCards() {
+    for (const [card, animation] of active) {
+      if (!content.contains(card) || reducedMotion.matches || printing) {
+        entrances.get(card)?.cancel();
+        entrances.delete(card);
+        animation.cancel(); active.delete(card);
+      }
+    }
+    if (reducedMotion.matches || printing) return;
+    content.querySelectorAll('.stat, .panel, .deadline-card').forEach(card => {
+      // Avoid animating a card twice when it is inside another card.
+      if (card.parentElement.closest('.stat, .panel, .deadline-card')) return;
+      if (active.has(card)) return;
+      const animation = card.animate([
+        { opacity: 0, scale: '0.86', transformOrigin: 'center top' },
+        { opacity: 1, scale: '1', transformOrigin: 'center top' }
+      ], { duration: 1000, fill: 'both', easing: 'ease-out' });
+      animation.pause();
+      active.set(card, animation);
+      const top = card.getBoundingClientRect().top;
+      const band = Math.min(180, window.innerHeight * .22);
+      // Cards already on screen also get an entrance; cards below use scroll progress.
+      if (top >= 0 && top <= window.innerHeight - band && !card.contains(document.activeElement)) {
+        const entrance = card.animate([
+          { opacity: 0, scale: '0.86', transformOrigin: 'center top' },
+          { opacity: 1, scale: '1', transformOrigin: 'center top' }
+        ], { duration: 650, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+        entrances.set(card, entrance);
+        entrance.finished.catch(() => {}).finally(() => {
+          if (entrances.get(card) === entrance) entrances.delete(card);
+        });
+      }
+    });
+    scheduleUpdate();
+  }
+  new MutationObserver(observeCards).observe(content, { childList: true, subtree: true });
+  window.addEventListener('scroll', () => {
+    // Hand control to scrolling immediately, rather than finishing an entrance first.
+    entrances.forEach(animation => animation.cancel());
+    entrances.clear();
+    scheduleUpdate();
+  }, { passive: true });
+  window.addEventListener('resize', scheduleUpdate);
+  content.addEventListener('focusin', scheduleUpdate);
+  content.addEventListener('focusout', scheduleUpdate);
+  reducedMotion.addEventListener('change', observeCards);
+  window.addEventListener('beforeprint', () => { printing = true; observeCards(); });
+  window.addEventListener('afterprint', () => { printing = false; observeCards(); });
+  observeCards();
+})();

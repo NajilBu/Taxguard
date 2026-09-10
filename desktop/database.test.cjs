@@ -58,8 +58,23 @@ test('Store authenticates valid company credentials and rejects invalid credenti
   assert.throws(()=>s.login('','taxguard2026'),/Username is required/);
   s.close();
 });
+test('Company name setting updates the workspace and every login account',()=>{
+  const {file}=fixture(),s=new Store(file,root);
+  const logo='data:image/png;base64,iVBORw0KGgo=';
+  s.saveUser({username:'staff',company_name:'Old name',role:'Staff',password:'secret1'});
+  assert.deepEqual(s.saveCompanyProfile({name:'New Firm & Associates',logo}),{name:'New Firm & Associates',logo});
+  assert.equal(s.getCompanyName(),'New Firm & Associates');
+  assert.deepEqual(s.getCompanyProfile(),{name:'New Firm & Associates',logo});
+  assert.equal(s.getUsers().every(u=>u.company_name==='New Firm & Associates'),true);
+  assert.equal(s.login('admin','taxguard2026').company,'New Firm & Associates');
+  assert.equal(s.login('staff','secret1').company,'New Firm & Associates');
+  assert.throws(()=>s.saveCompanyName('   '),/Company name is required/);
+  assert.throws(()=>s.saveCompanyProfile({name:'Firm',logo:'data:image/svg+xml;base64,PHN2Zz4='}),/PNG, JPEG, WebP, GIF, BMP, or ICO/);
+  s.close();
+});
 test('Landing page contains no sqlite references and enforces session-only sign out on exit',()=>{
   const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
+  assert.equal(html.includes('<body class="logged-out">'),true,'Workspace must be hidden before scripts initialize');
   const loginSection=html.slice(html.indexOf('<section id="login-landing"'),html.indexOf('</section>'));
   assert.equal(/sqlite/i.test(loginSection),false,'Landing page must not contain SQLite references');
   const appJs=fs.readFileSync(path.join(root,'app.js'),'utf8');
@@ -72,6 +87,8 @@ test('Landing page contains no sqlite references and enforces session-only sign 
   assert.equal(styleCss.includes('body.auth-transitioning'),true);
   assert.equal(styleCss.includes('dashboardAsideIn'),true);
   assert.equal(styleCss.includes('dashboardMainIn'),true);
+  const mainCjs=fs.readFileSync(path.join(root,'desktop/main.cjs'),'utf8');
+  assert.equal(mainCjs.includes("e.sender===win?.webContents && e.senderFrame===win.webContents.mainFrame"),true,'IPC trust must use the owning window rather than a path-dependent URL');
 });
 test('clientModal renders client compliance progress and obligations breakdown',()=>{
   const appJs=fs.readFileSync(path.join(root,'app.js'),'utf8');

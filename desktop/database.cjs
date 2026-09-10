@@ -112,6 +112,34 @@ class Store {
   getUsers(){
     return this.db.prepare('SELECT id, username, company_name, role, is_active, created_at, updated_at FROM users ORDER BY id ASC').all();
   }
+  getCompanyName(){
+    return this.getCompanyProfile().name;
+  }
+  getCompanyProfile(){
+    const name=this.db.prepare("SELECT value FROM workspace_meta WHERE key='company_name'").get()?.value
+      ||this.db.prepare('SELECT company_name FROM users ORDER BY id LIMIT 1').get()?.company_name
+      ||'EOO Tax & Accounting';
+    const logo=this.db.prepare("SELECT value FROM workspace_meta WHERE key='company_logo'").get()?.value||'';
+    return {name,logo};
+  }
+  saveCompanyName(value){
+    return this.saveCompanyProfile({name:value,logo:this.getCompanyProfile().logo}).name;
+  }
+  saveCompanyProfile(profile){
+    if(!profile||typeof profile!=='object')throw Error('Invalid company profile.');
+    const company=required(profile.name,'Company name');
+    if(company.length>120)throw Error('Company name must be 120 characters or fewer.');
+    const logo=profile.logo||'';
+    if(typeof logo!=='string'||logo.length>7*1024*1024)throw Error('Company logo must be smaller than 5 MB.');
+    if(logo&&!/^data:image\/(png|jpeg|webp|gif|bmp|x-icon|vnd\.microsoft\.icon);base64,[a-zA-Z0-9+/=]+$/.test(logo))throw Error('Company logo must be a PNG, JPEG, WebP, GIF, BMP, or ICO image.');
+    this.transaction(()=>{
+      this.db.prepare("INSERT INTO workspace_meta(key,value) VALUES('company_name',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(company);
+      this.db.prepare("INSERT INTO workspace_meta(key,value) VALUES('company_logo',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(logo);
+      this.db.prepare('UPDATE users SET company_name=?, updated_at=CURRENT_TIMESTAMP').run(company);
+      this.db.prepare('UPDATE company_login SET company_name=?, updated_at=CURRENT_TIMESTAMP WHERE id=1').run(company);
+    });
+    return {name:company,logo};
+  }
   saveUser(user){
     if(!user||typeof user!=='object')throw Error('Invalid user payload.');
     required(user.username,'Username');
@@ -177,7 +205,7 @@ class Store {
     }
     if(!user||user.is_active!==1)throw Error('Invalid username or password.');
     if(user.password_hash!==hashPassword(password))throw Error('Invalid username or password.');
-    return {authenticated:true,company:user.company_name,username:user.username,role:user.role||'Admin'};
+    return {authenticated:true,company:this.getCompanyName(),username:user.username,role:user.role||'Admin'};
   }
   importWorkspace(data){
     if(this.db.prepare('SELECT COUNT(*) n FROM clients').get().n)throw Error('Import is available only before client records have been added.');

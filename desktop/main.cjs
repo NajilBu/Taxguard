@@ -23,7 +23,7 @@ else app.whenReady().then(async()=>{
   }
   db=new Store(filename,root);
   if(!smoke)seedSamples(db,root);
-  const valid=e=>e.senderFrame?.url===entry && e.senderFrame===e.sender.mainFrame;
+  const valid=e=>e.sender===win?.webContents && e.senderFrame===win.webContents.mainFrame;
   ipcMain.on('records:sync',(e,action,data,revision)=>{
     try{
       if(!valid(e))throw Error('Untrusted database request.');
@@ -33,6 +33,10 @@ else app.whenReady().then(async()=>{
       else if(action==='users:list')value=db.getUsers();
       else if(action==='users:save')value=db.saveUser(data);
       else if(action==='users:delete')value=db.deleteUser(data?.id);
+      else if(action==='company:get')value=db.getCompanyName();
+      else if(action==='company:save')value=db.saveCompanyName(data?.name);
+      else if(action==='company:profile:get')value=db.getCompanyProfile();
+      else if(action==='company:profile:save')value=db.saveCompanyProfile(data);
       else if(action==='save'||action==='forms'){
         if(!Number.isSafeInteger(revision))throw Error('Reload TaxGuard before saving.');
         value=action==='save'?db.saveState(data,revision):db.saveForms(data,revision);
@@ -67,7 +71,17 @@ else app.whenReady().then(async()=>{
   });
   Menu.setApplicationMenu(null);
   const appIconPath=path.join(__dirname,'icon.ico');
-  win=new BrowserWindow({width:1400,height:900,icon:appIconPath,autoHideMenuBar:true,show:!smoke,webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true}});
+  win=new BrowserWindow({width:1400,height:900,icon:appIconPath,autoHideMenuBar:true,show:false,webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true}});
+  win.once('ready-to-show',()=>{
+    if(!smoke){win.maximize();win.show();}
+  });
+  win.webContents.on('before-input-event',(event,input)=>{
+    if(input.type==='keyDown' && input.control && input.shift && input.key.toLowerCase()==='j'){
+      event.preventDefault();
+      if(win.webContents.isDevToolsOpened()) win.webContents.closeDevTools();
+      else win.webContents.openDevTools({mode:'detach'});
+    }
+  });
   win.removeMenu();
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
   win.webContents.on('will-navigate',(e,url)=>{if(url!==entry && !url.startsWith('blob:') && !url.startsWith('data:'))e.preventDefault()});
@@ -89,6 +103,25 @@ else app.whenReady().then(async()=>{
   await win.loadFile(path.join(root,'index.html'));
   if(smoke){
     await win.webContents.executeJavaScript(`(async()=>{
+      if(getComputedStyle(document.querySelector('aside')).display!=='none')throw Error('Sidebar visible before login');
+      attemptLogin('admin','taxguard2026');
+      await new Promise(r=>setTimeout(r,550));
+      if(!document.body.classList.contains('logged-in'))throw Error('Desktop login failed');
+      if(getComputedStyle(document.querySelector('#login-landing')).display!=='none')throw Error('Landing still visible after login');
+      go('settings');
+      const companyInput=document.querySelector('#company-name-input');
+      companyInput.value='Smoke Test Firm';companyInput.dispatchEvent(new Event('input',{bubbles:true}));
+      const logoInput=document.querySelector('#company-logo-input'),transfer=new DataTransfer();
+      window.dispatchEvent(new Event('focus'));
+      if(document.querySelector('#company-logo-input')!==logoInput)throw Error('Focus refresh replaced the file input');
+      const logoBytes=Uint8Array.from(atob('${fs.readFileSync(path.join(__dirname,'icon.png')).toString('base64')}'),c=>c.charCodeAt(0));
+      transfer.items.add(new File([logoBytes],'logo.png',{type:'image/png'}));
+      logoInput.files=transfer.files;logoInput.dispatchEvent(new Event('change',{bubbles:true}));
+      await new Promise(r=>setTimeout(r,100));
+      if(companyInput.value!=='Smoke Test Firm'||!document.querySelector('#company-logo-preview img'))throw Error('Company profile draft was reset');
+      await document.querySelector('#company-logo-preview img').decode();
+      document.querySelector('#company-profile-form').requestSubmit();await new Promise(r=>setTimeout(r,100));
+      if(window.taxguardDB.getCompanyProfile().name!=='Smoke Test Firm')throw Error('Company profile did not persist');
       go('clients');editClient();
       const f=document.querySelector('#client-form');
       f.elements.name.value='SQLite integration test';f.elements.tin.value='987-654-321-000';
@@ -106,7 +139,8 @@ else app.whenReady().then(async()=>{
       if(loaded.forms.find(f=>f.id==='2550-Q').overrides?.[2026]?.Q1!=='2026-04-28')throw Error('Deadline edit did not persist');
     })()`);
     await win.loadFile(path.join(root,'index.html'));
-    const result=await win.webContents.executeJavaScript(`({connected:!!window.taxguardDB,clients:state.clients.length,forms:forms.length,footer:document.querySelector('footer span').textContent,settings:(go('settings'),document.querySelector('#content').textContent.includes('Data storage'))})`);
+    await win.webContents.executeJavaScript(`(async()=>{go('settings');const image=document.querySelector('#company-logo-preview img');if(!image)throw Error('Saved logo missing after reload');await image.decode();if(!image.naturalWidth)throw Error('Saved logo did not decode');})()`);
+    const result=await win.webContents.executeJavaScript(`({connected:!!window.taxguardDB,clients:state.clients.length,forms:forms.length,footer:document.querySelector('footer span').textContent,settings:(go('settings'),document.querySelector('#company-name-input')?.value==='Smoke Test Firm'&&!!document.querySelector('#company-logo-preview img'))})`);
     if(!result.connected||result.clients!==1||!result.forms||!result.settings)throw Error(JSON.stringify(result));
     console.log('DESKTOP PASS',JSON.stringify(result));app.quit();
   }
