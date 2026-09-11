@@ -10,6 +10,47 @@ const root=path.join(__dirname,'..');
 const catalog=require('../database/default-forms.json');
 const base={id:1,name:'Allocation test',tin:'111-222-333-000',type:'Sole proprietorship',tax:'NVAT',status:'Active',start:'2025-01-01',forms:['2551-Q']};
 const profile={type:base.type,tax:'NVAT',calendar:'calendar',income:'eight',percentage:'yes',compensation:'no',expanded:'no'};
+test('Automatic inheritance uses the latest earlier year without replacing configured history',()=>{
+  const c={...base,yearProfiles:{2026:{...profile,income:'regular',forms:['1702-Q']},2028:{...profile,income:'regular',forms:['2550-Q']}}};
+  assert.deepEqual(allocation.forYear(c,2027).forms,['1702-Q']);
+  assert.deepEqual(allocation.forYear(c,2028).forms,['2550-Q']);
+  assert.deepEqual(allocation.forYear(c,2030).forms,['2550-Q']);
+  assert.equal(allocation.forYear(c,2030).inheritedFrom,2028);
+  assert.deepEqual(allocation.forYear(c,2025).forms,base.forms);
+  assert.deepEqual(allocation.forYear({...c,status:'Closed'},2027).forms,[]);
+  assert.equal(c.yearProfiles[2027],undefined);
+});
+test('Rollover preserves history, prevents repeats, and excludes elections and configured years',()=>{
+  const state={clients:[{...base,yearProfiles:{2026:{...profile,income:'itemized',forms:['1701-Q','1701']}}}],filings:{'1:2026:1701-Q:Q1':{date:'2026-05-15'}}};
+  const before=JSON.stringify(state);
+  const next=allocation.rollover(state,2026,[1]);
+  assert.equal(JSON.stringify(state),before);
+  assert.deepEqual(next.filings,state.filings);
+  assert.deepEqual(next.clients[0].yearProfiles[2027].forms,['1701-Q','1701']);
+  assert.equal(next.clients.length,1);
+  assert.throws(()=>allocation.rollover(next,2026,[1]),/no longer eligible/);
+  for(const income of ['eight','mixedEight','osd']){
+    const election={...state,clients:[{...base,yearProfiles:{2026:{...profile,income,forms:['1701A']}}}]};
+    assert.match(allocation.rolloverPlan(election,2026)[0].reason,/Annual election/);
+  }
+  assert.throws(()=>allocation.rollover(state,2026,[]),/Select/);
+  assert.throws(()=>allocation.rolloverPlan(state,9998),/source year/);
+  assert.match(allocation.rolloverPlan({...state,filings:{'1:2027:1701-Q:Q1':{date:'2027-05-15'}}},2026)[0].reason,/recorded filings/);
+  assert.match(allocation.rolloverPlan({...state,clients:[{...base,status:'Closed'}]},2026)[0].reason,/not active/);
+});
+test('Rolled profiles and original filings survive SQLite reopen',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'taxguard-rollover-')),file=path.join(dir,'test.db');
+  let store=new Store(file,root);
+  try{
+    const state={clients:[{...base,yearProfiles:{2026:{...profile,income:'itemized',forms:['1701-Q']}}}],filings:{'1:2026:1701-Q:Q1':{date:'2026-05-15'}}};
+    store.saveState(allocation.rollover(state,2026,[1]));
+    store.close();store=new Store(file,root);
+    const loaded=store.load();
+    assert.deepEqual(loaded.clients[0].yearProfiles[2027].forms,['1701-Q']);
+    assert.deepEqual(loaded.clients[0].yearProfiles[2026].forms,['1701-Q']);
+    assert.deepEqual(Object.keys(loaded.filings),['1:2026:1701-Q:Q1']);
+  }finally{store.close();}
+});
 test('Suggestions distinguish 8% elections, VAT, unknown NVAT, mixed income and regular corporations',()=>{
   const codes=p=>allocation.suggest(p,2026,catalog).suggestions.map(s=>s.code);
   assert.deepEqual(codes(profile),['1701-Q','1701A']);
@@ -34,7 +75,9 @@ test('Year profiles survive reopen, preserve legacy years and reject removal of 
     state=store.load();
     assert.deepEqual(allocation.forYear(state.clients[0],2025).forms,['2551-Q']);
     assert.deepEqual(allocation.forYear(state.clients[0],2026).forms,['1701-Q','1701A']);
-    assert.deepEqual(allocation.forYear(state.clients[0],2027).forms,['2551-Q']);
+    assert.deepEqual(allocation.forYear(state.clients[0],2027).forms,['1701-Q']);
+    assert.equal(allocation.forYear(state.clients[0],2027).income,'unknown');
+    assert(allocation.forYear(state.clients[0],2027).reviewReason);
     const revision=state.revision;
     state.clients[0].name='Should roll back';
     state.clients[0].yearProfiles[2025]={...profile,forms:[]};

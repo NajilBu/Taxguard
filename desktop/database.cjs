@@ -110,6 +110,11 @@ class Store {
           if(!['VAT','NVAT'].includes(profile.tax))throw Error('Invalid yearly tax type.');
           required(profile.type,'Yearly business type');
           const clean={type:profile.type,tax:profile.tax,forms:[...new Set(profile.forms)],periods:{}};
+          if(profile.inheritedFrom!==undefined){
+            if(!Number.isInteger(profile.inheritedFrom)||profile.inheritedFrom>=Number(y)||profile.inheritedFrom<1000)throw Error('Invalid source year.');
+            clean.inheritedFrom=profile.inheritedFrom;
+          }
+          if(profile.reviewReason){required(profile.reviewReason,'Review reason');clean.reviewReason=profile.reviewReason;}
           for(const code of clean.forms){
             const f=this.db.prepare('SELECT schedule_json FROM forms WHERE code=?').get(code);
             if(!f)throw Error(`Unknown required form: ${code}`);

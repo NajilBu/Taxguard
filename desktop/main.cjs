@@ -134,6 +134,7 @@ else app.whenReady().then(async()=>{
       const c=state.clients.find(c=>c.name==='SQLite integration test');if(!c)throw Error('Client form did not save');
       go('tracker');fileModal(c.id+':2026:2550-Q:Q1');
       const filing=document.querySelector('#filing-form');filing.elements.date.value='2026-04-20';filing.elements.reference.value='SQLITE-TEST';filing.requestSubmit();
+      document.querySelector('#confirm-save-filing').click();
       await new Promise(r=>setTimeout(r,240));
       go('deadlines');deadlineModal('2550-Q');document.querySelector('#edit-schedule').click();
       document.querySelector('#schedule-form input[name="date"]').value='2026-04-28';document.querySelector('#schedule-form').requestSubmit();

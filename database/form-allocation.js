@@ -3,7 +3,23 @@
   const expandedMonths=['Jan','Feb','Apr','May','Jul','Aug','Oct','Nov'];
   function forYear(client,year){
     const profile=client.yearProfiles?.[year];
-    return profile?{...client,...profile,id:client.id}:client;
+    if(profile)return {...client,...profile,id:client.id};
+    const previous=Object.keys(client.yearProfiles||{}).map(Number).filter(y=>y<year).sort((a,b)=>b-a)[0];
+    if(!previous)return client;
+    const source=client.yearProfiles[previous];
+    const inherited={...client,...source,id:client.id,forms:[...source.forms],periods:JSON.parse(JSON.stringify(source.periods||{})),inheritedFrom:previous};
+    if(client.status!=='Active'||source.calendar==='fiscal'){
+      inherited.forms=[];
+      inherited.reviewReason=client.status!=='Active'?'Client status needs review before carrying requirements forward.':'Fiscal-year requirements need review.';
+    }else if(['eight','mixedEight','osd'].includes(source.income)){
+      inherited.income='unknown';
+      inherited.percentage='unknown';
+      inherited.forms=inherited.forms.filter(code=>!['1701','1701A','2551-Q'].includes(code));
+      inherited.reviewReason='Confirm this year’s income-tax election, annual return and percentage-tax requirements.';
+    }else if(!source.calendar||source.calendar==='unknown'||!source.income||source.income==='unknown'){
+      inherited.reviewReason='Recurring forms carried forward; confirm this year’s registration and requirements.';
+    }
+    return inherited;
   }
   function suggest(profile,year,catalog){
     const suggestions=[],warnings=[];
@@ -43,7 +59,35 @@
     warnings.push('Suggestions add to your selection. Review existing forms, special taxes and annual-return alternatives before saving.');
     return {suggestions,warnings};
   }
-  const api={forYear,suggest,expandedMonths};
+  function rolloverPlan(state,sourceYear){
+    if(!Number.isInteger(sourceYear)||sourceYear<1000||sourceYear>=9998)throw Error('Choose a source year between 1000 and 9997.');
+    const targetYear=sourceYear+1;
+    return state.clients.map(client=>{
+      const source=forYear(client,sourceYear);
+      let reason='';
+      if(client.yearProfiles?.[targetYear])reason='Target year already configured';
+      else if(Object.keys(state.filings).some(k=>k.startsWith(client.id+':'+targetYear+':')))reason='Target year has recorded filings';
+      else if(client.status!=='Active')reason='Client is not active — review manually';
+      else if(client.start>sourceYear+'-12-31')reason='Client starts after the source year';
+      else if(!source.forms.length)reason='No source-year requirements';
+      else if(['eight','mixedEight','osd'].includes(source.income))reason='Annual election: configure the target year in Edit client';
+      else if(source.calendar==='fiscal')reason='Fiscal year requires manual review';
+      const profile={type:source.type,tax:source.tax,forms:[...source.forms],periods:JSON.parse(JSON.stringify(source.periods||{}))};
+      for(const field of ['calendar','income','percentage','compensation','expanded'])if(source[field])profile[field]=source[field];
+      return {id:client.id,name:client.name,sourceYear,targetYear,profile,reason};
+    });
+  }
+  function rollover(state,sourceYear,selectedIds){
+    const plan=rolloverPlan(state,sourceYear),ids=new Set(selectedIds);
+    if(!ids.size)throw Error('Select at least one reviewed client.');
+    if([...ids].some(id=>!plan.some(row=>row.id===id&&!row.reason)))throw Error('A selected client is no longer eligible. Reopen the rollover review.');
+    return {...state,clients:state.clients.map(client=>{
+      if(!ids.has(client.id))return client;
+      const row=plan.find(row=>row.id===client.id);
+      return {...client,yearProfiles:{...client.yearProfiles,[row.targetYear]:row.profile}};
+    })};
+  }
+  const api={forYear,suggest,expandedMonths,rolloverPlan,rollover};
   if(typeof module==='object'&&module.exports)module.exports=api;
   else root.TaxGuardAllocation=api;
 })(typeof window==='object'?window:globalThis);

@@ -906,3 +906,22 @@ body { background-color: #e4eaf1; }
 .company-logo-editor{flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center}
 .company-logo-editor>div:last-child{flex:0 1 auto;align-items:center}
 .company-logo-editor .company-logo-preview{width:120px;height:120px;flex:0 0 120px;border-radius:14px;padding:0;font-size:30px}
+.client-forms-dialog{width:min(520px,calc(100vw - 32px));max-height:80vh;box-sizing:border-box;overflow:auto;padding:24px;border:1px solid var(--line);border-radius:12px}
+.client-forms-dialog::backdrop{background:rgba(16,37,61,.45)}
+.client-forms-dialog .picker-options{grid-template-columns:repeat(2,minmax(0,1fr))}
+.client-forms-dialog .picker-options input{width:auto;margin:0}
+.client-forms-dialog .picker-done{float:none}
+#client-form-pills .form-pill{display:inline-flex;align-items:center;font-size:13px}
+#client-form-pills .form-pill button{cursor:pointer;font-size:18px;line-height:1;padding:2px 4px}
+@media(max-width:420px){.client-forms-dialog .picker-options{grid-template-columns:1fr}}
+#filing-confirmation{width:min(560px,calc(100vw - 32px));max-height:85vh;overflow:auto;box-sizing:border-box}
+#filing-confirmation::backdrop{background:rgba(16,37,61,.45)}
+.filing-confirmation-details dt{color:#71849f;font-size:12px;margin-top:14px}
+.filing-confirmation-details dd{margin:4px 0 0;overflow-wrap:anywhere}
+.rollover-list{display:grid;gap:12px;margin:20px 0}
+.rollover-row{display:flex;align-items:flex-start;gap:12px;padding:12px;border:1px solid var(--line);border-radius:8px}
+.rollover-row input{width:auto;margin:4px 0}
+.rollover-row small{display:block;margin-top:5px;line-height:1.5}
+#year-history-dialog{width:min(540px,calc(100vw - 32px));max-height:80vh;overflow:auto;box-sizing:border-box;padding:28px;border:1px solid var(--line);border-radius:14px}
+#year-history-dialog::backdrop{background:rgba(16,37,61,.28);backdrop-filter:none}
+#year-history-dialog h2{font-size:20px;overflow-wrap:anywhere}
