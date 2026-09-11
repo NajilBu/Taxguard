@@ -54,7 +54,7 @@ function ensureAutomaticYear(){
 }
 function obligations(){return state.clients.map(c=>clientForYear(c)).flatMap(c=>forms.filter(f=>c.forms.includes(f.id)).flatMap(f=>f.periods.filter(p=>!c.periods?.[f.id]||c.periods[f.id].includes(p)).map(p=>{let i=f.periods.indexOf(p),end=p==='Annual'?`${year}-12-31`:p.startsWith('Q')?`${year}-${String((i+1)*3).padStart(2,'0')}-31`:`${year}-${String(i+1).padStart(2,'0')}-31`;return {c,f,p,end,due:due(f,p,year),key:key(c,f,p),filing:state.filings[key(c,f,p)]}}).filter(o=>o.end>=c.start)))}
 if(!database&&!localStorage.getItem('taxguard-workspace-v1')){for(const y of [2024,2025,2026]){year=y;obligations().forEach((o,i)=>{if((y<2026||o.due<'2026-09-01')&&i%5!==0)state.filings[o.key]={date:o.due,reference:`TG-${y}-${String(i+1).padStart(4,'0')}`,remarks:'Sample submission'};})}year=new Date().getFullYear();save()}
-function closeModal(m,afterClose){if(!m)return;if(m.classList.contains('closing')){try{m.close();}catch(e){}m.classList.remove('closing');if(afterClose)afterClose();return;}m.classList.add('closing');setTimeout(()=>{try{m.close();}catch(e){}m.classList.remove('closing');if(afterClose)afterClose();},180)}
+function closeModal(m,afterClose){if(!m)return;clearTimeout(m.workspaceCloseTimer);if(m.classList.contains('closing')){try{m.close();}catch(e){}m.classList.remove('closing');if(afterClose)afterClose();return;}m.classList.add('closing');m.workspaceCloseTimer=setTimeout(()=>{try{m.close();}catch(e){}m.classList.remove('closing');if(afterClose)afterClose();},180)}
 function restoreDatabase(){const saved=database.load();databaseRevision=saved.revision;state={clients:saved.clients,filings:saved.filings};forms.splice(0,forms.length,...saved.forms);}
 function save(){try{if(database)databaseRevision=database.save(state,databaseRevision);else localStorage.setItem('taxguard-workspace-v1',JSON.stringify(state));}catch(error){if(database)restoreDatabase();notify('Not saved: '+error.message);throw error;}}
 function saveForms(){try{if(database)databaseRevision=database.saveForms(forms,databaseRevision);else localStorage.setItem('taxguard-custom-forms',JSON.stringify(forms));}catch(error){if(database)restoreDatabase();notify('Not saved: '+error.message);throw error;}}
@@ -96,7 +96,7 @@ function editClient(id){
   const original=state.clients.find(c=>c.id===id);
   const selectedYear=year;
   const c=clientForYear(original||{name:'',tin:'',type:'Sole proprietorship',status:'Active',tax:'NVAT',start:today,forms:[]},selectedYear);
-  const m=document.querySelector('#modal');
+  const m=workspaceDialog();
   const select=(name,label,options,value)=>`<div${name==='income'?' style="grid-column:1 / -1"':''}><label>${label}</label><select name="${name}">${options.map(([v,text])=>`<option value="${esc(v)}" ${value===v?'selected':''}>${esc(text)}</option>`).join('')}</select></div>`;
   const yesNo=[['unknown','Not confirmed'],['yes','Yes'],['no','No']];
   const fields=[['type','Business type',['Sole proprietorship','Partnership','Corporation']],['tax','Tax type',['VAT','NVAT']],['status','Client status',['Active','Inactive','For closure','Closed']]];
@@ -227,7 +227,10 @@ function editClient(id){
     const previousClients=state.clients.slice();
     if(id)state.clients[state.clients.findIndex(c=>c.id===id)]=value;else state.clients.push(value);
     try{save();}catch{if(!database)state.clients=previousClients;return;}
-    closeModal(m);render();notify(`Client saved. Requirements updated for ${selectedYear}.`);
+    closeModal(m,()=>{
+      const parent=document.querySelector('#modal');
+      if(parent.open&&Number(parent.dataset.clientId)===id)clientModal(id,true);
+    });render();notify(`Client saved. Requirements updated for ${selectedYear}.`);
   };
 }
 function confirmFiling(k,o,draft,parent,returnClientId){
@@ -257,23 +260,30 @@ function confirmFiling(k,o,draft,parent,returnClientId){
       e.target.disabled=false;return;
     }
     confirmation.close();
-    closeModal(parent,()=>{if(returnClientId)clientModal(returnClientId);});
+    closeModal(parent,()=>{
+      if(returnClientId){
+        const selector=document.querySelector('#modal');
+        if(selector.querySelector('#choose-client-filing'))selector.close();
+        clientModal(returnClientId,true);
+      }
+    });
     render();notify('Filing saved. Progress updated.');
   };
   confirmation.showModal();
 }
 function chooseClientFiling(id){
-  const pending=obligations().filter(o=>o.c.id===id&&!o.filing).sort((a,b)=>a.due.localeCompare(b.due));
-  const m=document.querySelector('#modal');
+  const pending=obligations().filter(o=>o.c.id===id&&!o.filing&&Number(o.due.slice(0,4))<=year).sort((a,b)=>a.due.localeCompare(b.due));
   if(!pending.length){notify('No unfiled obligations for this year.');return;}
+  const m=workspaceDialog();
   m.innerHTML=`<h2>Record filing</h2><p>${esc(pending[0].c.name)} · ${year}</p>
     <form id="choose-client-filing"><label for="client-filing-period">Form and period</label>
     <select id="client-filing-period" required>${pending.map(o=>`<option value="${esc(o.key)}">${esc(o.f.id)} · ${esc(o.p)} · Due ${esc(o.due)}</option>`).join('')}</select>
     <div class="modal-actions"><button type="button" class="btn" id="back-to-client">Back</button><button class="btn primary">Continue</button></div></form>`;
-  m.querySelector('#back-to-client').onclick=()=>clientModal(id);
+  m.querySelector('#back-to-client').onclick=()=>dismissWorkspaceDialog(m);
   m.querySelector('#choose-client-filing').onsubmit=e=>{
     e.preventDefault();fileModal(m.querySelector('#client-filing-period').value,id);
   };
+  m.showModal();
 }
 function filingAlertHTML(o, fileDateStr, isComplete){
   if(!o || !o.due) return '';
@@ -296,12 +306,32 @@ function filingAlertHTML(o, fileDateStr, isComplete){
     return `<div class="filing-modal-alert alert-early"><span class="alert-icon">⏳</span><div><strong>Early Filing Reminder</strong><p>${periodNote}It is currently early to file this return—the statutory deadline is still <b>${diffDays} days away</b> on <b>${esc(dueStr)}</b>. Ensure all transactions, withholding, and period ledgers are complete before submitting in advance.</p></div></div>`;
   }
 }
-function fileModal(k,returnClientId){let o=obligations().find(o=>o.key===k),m=document.querySelector('#modal');if(!o)return;const initialDate=o.filing?.date||today;m.innerHTML=`<h2>${o.filing?'Filing details':'Record filing'}</h2><p>${esc(o.c.name)}<br><strong>${o.f.id} · ${o.p} ${year}</strong> · Due ${o.due}</p><div id="filing-alert-container">${filingAlertHTML(o,initialDate,!!o.filing)}</div><form id="filing-form"><label>Filing date</label><input type="date" name="date" required max="${today}" value="${initialDate}"><label>Confirmation / reference number</label><input name="reference" required value="${esc(o.filing?.reference||'')}" placeholder="Enter submission reference"><label>Remarks</label><input name="remarks" value="${esc(o.filing?.remarks||'')}" placeholder="Optional notes"><div class="modal-actions"><button type="button" class="btn" id="cancel">Cancel</button><button class="btn primary">Save filing</button></div></form>`;m.showModal();const dateInput=m.querySelector('#filing-form input[name="date"]');const alertContainer=m.querySelector('#filing-alert-container');if(dateInput&&alertContainer){dateInput.addEventListener('input',()=>{alertContainer.innerHTML=filingAlertHTML(o,dateInput.value,!!o.filing)})};document.querySelector('#cancel').onclick=()=>closeModal(m);document.querySelector('#filing-form').onsubmit=e=>{e.preventDefault();confirmFiling(k,o,Object.fromEntries(new FormData(e.target)),m,returnClientId)}}
+function fileModal(k,returnClientId){let o=obligations().find(o=>o.key===k),m=workspaceDialog();if(!o)return;const initialDate=o.filing?.date||today;const dueYear=Number(o.due.slice(0,4)),nextYear=dueYear>year;m.innerHTML=`<h2>${o.filing?'Filing details':'Record filing'}</h2><p>${esc(o.c.name)}<br><strong>${o.f.id} · ${o.p} ${year}</strong> · Due ${o.due}</p>${nextYear?'<div class="filing-modal-alert alert-due-soon"><span class="alert-icon">⚠️</span><div><strong>Next-year due date</strong><p>This obligation belongs to the selected '+year+' filing year, but its due date falls in '+dueYear+'. It is shown for reference only and should be filed from the '+dueYear+' tax year.</p></div></div>':''}<div id="filing-alert-container">${filingAlertHTML(o,initialDate,!!o.filing)}</div><form id="filing-form"><label>Filing date</label><input type="date" name="date" required max="${today}" value="${initialDate}"><label>Confirmation / reference number</label><input name="reference" required value="${esc(o.filing?.reference||'')}" placeholder="Enter submission reference"><label>Remarks</label><input name="remarks" value="${esc(o.filing?.remarks||'')}" placeholder="Optional notes"><div class="modal-actions"><button type="button" class="btn" id="cancel">Cancel</button><button class="btn primary" ${nextYear?'disabled':''}>Save filing</button></div></form>`;m.showModal();const dateInput=m.querySelector('#filing-form input[name="date"]');const alertContainer=m.querySelector('#filing-alert-container');if(dateInput&&alertContainer){dateInput.addEventListener('input',()=>{alertContainer.innerHTML=filingAlertHTML(o,dateInput.value,!!o.filing)})};m.querySelector('#cancel').onclick=()=>closeModal(m);m.querySelector('#filing-form').onsubmit=e=>{e.preventDefault();if(nextYear){notify('Switch to tax year '+dueYear+' before recording this filing.');return;}confirmFiling(k,o,Object.fromEntries(new FormData(e.target)),m,returnClientId)}}
 render();
 
 const basicDeadlineModal=deadlineModal;
 deadlineModal=function(id){const f=forms.find(x=>x.id===id),m=document.querySelector('#modal');if(!f)return; m.innerHTML=`<h2>${esc(f.id)}</h2><p>${esc(f.name)}</p><form id="schedule-form"><div class="schedule-edit-list">${f.periods.map((p,i)=>`<div class="schedule-edit-row"><input name="period" value="${esc(p)}" aria-label="Period"><input type="date" name="date" value="${esc(f.dates[i]||due(f,p,year))}" aria-label="Due date"></div>`).join('')}</div><div class="modal-actions"><button type="button" class="btn" id="cancel">Cancel</button><button class="btn primary">Save schedule</button></div></form>`;m.showModal();m.querySelector('#cancel').onclick=()=>closeModal(m);m.querySelector('#schedule-form').onsubmit=e=>{e.preventDefault();const fd=new FormData(e.target),periods=fd.getAll('period'),dates=fd.getAll('date');f.periods=periods;f.dates=dates;saveForms();closeModal(m);render();notify('Schedule updated.')}};
-deadlineModal=function(id){const f=forms.find(x=>x.id===id),m=document.querySelector('#modal');if(!f)return;const fullDate=v=>/^\d{4}-\d{2}-\d{2}$/.test(v)?v:`${year}-${v}`;const rows=()=>f.periods.map((p,i)=>`<div class="schedule-edit-row"><span class="schedule-period">${esc(p)}</span><span class="schedule-date">${esc(due(f,p,year))}</span></div>`).join('');m.innerHTML=`<h2>${esc(f.id)}</h2><p>${esc(f.name)}</p><div class="schedule-edit-list">${rows()}</div><div class="modal-actions"><button type="button" class="btn" id="cancel">Close</button><button type="button" class="btn primary" id="edit-schedule">Edit schedule</button></div>`;m.showModal();m.querySelector('#cancel').onclick=()=>closeModal(m);m.querySelector('#edit-schedule').onclick=()=>{m.innerHTML=`<h2>Edit ${esc(f.id)} schedule</h2><form id="schedule-form"><div class="schedule-edit-list">${f.periods.map((p,i)=>`<div class="schedule-edit-row"><input name="period" value="${esc(p)}"><input type="date" name="date" value="${esc(due(f,p,year))}"></div>`).join('')}</div><div class="modal-actions"><button type="button" class="btn" id="cancel-edit">Cancel</button><button class="btn primary">Save schedule</button></div></form>`;m.querySelector('#cancel-edit').onclick=()=>deadlineModal(id);m.querySelector('#schedule-form').onsubmit=e=>{e.preventDefault();const d=new FormData(e.target);const periods=d.getAll('period').map(p=>p.trim()),dates=d.getAll('date');if(periods.some((p,i)=>p!==f.periods[i]))throw Error('Period names cannot change once schedules are used.');f.overrides=f.overrides||{};f.overrides[year]=Object.fromEntries(periods.map((p,i)=>[p,dates[i]]));saveForms();closeModal(m);render();notify('Schedule updated.')}}};
+deadlineModal=function(id,reuse=false){
+  const f=forms.find(x=>x.id===id);if(!f)return;
+  const m=workspaceDialog(reuse);
+  m.innerHTML=`<h2>${esc(f.id)}</h2><p>${esc(f.name)}</p><div class="schedule-edit-list">${f.periods.map(p=>`<div class="schedule-edit-row"><span class="schedule-period">${esc(p)}</span><span class="schedule-date">${esc(due(f,p,year))}</span></div>`).join('')}</div><div class="modal-actions"><button type="button" class="btn" id="cancel">Close</button><button type="button" class="btn primary" id="edit-schedule">Edit schedule</button></div>`;
+  m.showModal();
+  m.querySelector('#cancel').onclick=()=>closeModal(m);
+  m.querySelector('#edit-schedule').onclick=()=>{
+    const editor=workspaceDialog();
+    editor.innerHTML=`<h2>Edit ${esc(f.id)} schedule</h2><form id="schedule-form"><div class="schedule-edit-list">${f.periods.map(p=>`<div class="schedule-edit-row"><input name="period" value="${esc(p)}"><input type="date" name="date" value="${esc(due(f,p,year))}"></div>`).join('')}</div><div class="modal-actions"><button type="button" class="btn" id="cancel-edit">Cancel</button><button class="btn primary">Save schedule</button></div></form>`;
+    editor.querySelector('#cancel-edit').onclick=()=>dismissWorkspaceDialog(editor);
+    editor.querySelector('#schedule-form').onsubmit=e=>{
+      e.preventDefault();
+      const d=new FormData(e.target),periods=d.getAll('period').map(p=>p.trim()),dates=d.getAll('date');
+      if(periods.some((p,i)=>p!==f.periods[i])){notify('Period names cannot change once schedules are used.');return;}
+      f.overrides=f.overrides||{};f.overrides[year]=Object.fromEntries(periods.map((p,i)=>[p,dates[i]]));
+      try{saveForms();}catch{return;}
+      closeModal(editor,()=>deadlineModal(id,true));render();notify('Schedule updated.');
+    };
+    editor.showModal();
+  };
+};
 
 // Deadline management controls.
 const originalDeadlineCards=deadlines;
@@ -328,9 +358,10 @@ function clientTrendChart(){
   const summary=points.map(p=>`${p.year}: ${p.count} clients`).join('; ');
   return `<div class="panel client-trend"><div class="panel-head"><div><h2>Clients over time</h2><p>Cumulative client count by Start of Filing year · Through ${year}</p></div><span class="subtle">${points.at(-1).count} CLIENTS</span></div><div class="panel-body"><svg viewBox="0 0 960 248" role="img" aria-labelledby="client-trend-title client-trend-desc"><title id="client-trend-title">Clients over time</title><desc id="client-trend-desc">${summary}. Includes all client statuses.</desc>${Array.from({length:5},(_,i)=>{let n=i*step;return `<line x1="52" y1="${y(n)}" x2="928" y2="${y(n)}" stroke="#e9eef4"/><text x="36" y="${y(n)+4}" text-anchor="end">${n}</text>`}).join('')}<polygon points="52,204 ${coords} 928,204" fill="#eef4fe"/><polyline points="${coords}" fill="none" stroke="#4b84e5" stroke-width="3" stroke-linejoin="round"/>${points.map((p,i)=>`<g><circle cx="${x(i)}" cy="${y(p.count)}" r="5" fill="#4b84e5" stroke="white" stroke-width="2"><title>${p.year}: ${p.count} clients</title></circle><text x="${x(i)}" y="${y(p.count)-13}" text-anchor="middle" class="trend-value">${p.count}</text>${i%Math.max(1,Math.ceil(points.length/10))===0||i===points.length-1?`<text x="${x(i)}" y="231" text-anchor="middle">${p.year}</text>`:''}</g>`).join('')}</svg><div class="subtle">Includes all client statuses. Counts reflect filing start dates, not account creation dates.</div></div></div>`;
 }
-function clientModal(id){
-  const original=state.clients.find(x=>x.id===id),c=original&&clientForYear(original),m=document.querySelector('#modal');
+function clientModal(id,reuse=false){
+  const original=state.clients.find(x=>x.id===id),c=original&&clientForYear(original),m=workspaceDialog(reuse);
   if(!c)return;
+  m.dataset.clientId=id;
 
   const allObs=obligations();
   const clientObs=allObs.filter(o=>o.c.id===c.id);
@@ -435,14 +466,14 @@ function clientModal(id){
     history.querySelector('#back-history').onclick=dismiss;
     history.querySelectorAll('[data-history-year]').forEach(button=>button.onclick=()=>{
       const selected=Number(button.dataset.historyYear);
-      dismiss();year=selected;render();clientModal(id);
+      dismiss();year=selected;render();clientModal(id,true);
       m.querySelector('#client-year-history')?.focus();
     });
     document.body.append(history);
     history.showModal();
   };
   m.querySelector('#record-client-filing').onclick=()=>chooseClientFiling(id);
-  m.querySelector('#edit-client-detail').onclick=()=>{closeModal(m,()=>editClient(id))}
+  m.querySelector('#edit-client-detail').onclick=()=>editClient(id);
 }
 function settings(){const current=localStorage.getItem('taxguard-theme')||'blue';return heading('Settings','Personalize the TaxGuard workspace.','')+`<div class="panel settings-panel"><div class="panel-head"><div><h2>Color theme</h2><p>Choose the appearance used across the system.</p></div></div><div class="theme-options">${[['blue','Default blue'],['navy','Dark navy'],['green','Forest green'],['purple','Soft purple']].map(([v,l])=>`<button class="theme-option ${current===v?'active':''}" data-theme="${v}"><span class="theme-swatch ${v}"></span><span>${l}</span>${current===v?'<b>✓</b>':''}</button>`).join('')}</div></div>`}
 document.addEventListener('click',e=>{const b=e.target.closest('.theme-option[data-theme]');if(!b)return;const chosen=b.dataset.theme,m=document.querySelector('#modal'),label=b.querySelector('span:last-of-type')?.textContent||chosen;m.innerHTML=`<h2>Apply color theme?</h2><p>Change the workspace appearance to <strong>${label}</strong>?</p><div class="modal-actions"><button class="btn" id="cancel-theme">Cancel</button><button class="btn primary" id="apply-theme">Apply theme</button></div>`;m.showModal();m.querySelector('#cancel-theme').onclick=()=>closeModal(m);m.querySelector('#apply-theme').onclick=()=>{localStorage.setItem('taxguard-theme',chosen);document.body.dataset.theme=chosen;document.documentElement.style.setProperty('--blue',{blue:'#2766db',navy:'#4776b8',green:'#16866b',purple:'#7656c7',orange:'#e67e22',red:'#d9534f'}[chosen]||'#2766db');closeModal(m);setTimeout(()=>{render();notify('Theme updated.')},180)}});document.body.dataset.theme=localStorage.getItem('taxguard-theme')||'blue';document.documentElement.style.setProperty('--blue',{blue:'#2766db',navy:'#4776b8',green:'#16866b',purple:'#7656c7',orange:'#e67e22',red:'#d9534f'}[localStorage.getItem('taxguard-theme')||'blue']||'#2766db');render();

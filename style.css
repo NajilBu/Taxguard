@@ -925,3 +925,7 @@ body { background-color: #e4eaf1; }
 #year-history-dialog{width:min(540px,calc(100vw - 32px));max-height:80vh;overflow:auto;box-sizing:border-box;padding:28px;border:1px solid var(--line);border-radius:14px}
 #year-history-dialog::backdrop{background:rgba(16,37,61,.28);backdrop-filter:none}
 #year-history-dialog h2{font-size:20px;overflow-wrap:anywhere}
+#discard-dialog{width:min(480px,calc(100vw - 32px));box-sizing:border-box;max-height:80vh;overflow:auto}
+#discard-dialog::backdrop{background:rgba(16,37,61,.3)}
+.workspace-child-dialog{width:min(630px,calc(100vw - 40px));max-height:82vh;box-sizing:border-box;overflow:auto}
+.workspace-child-dialog::backdrop{background:rgba(16,37,61,.24);backdrop-filter:none}

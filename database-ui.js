@@ -276,7 +276,7 @@ function renderSvgFormBars(obsOrItems){
 function openReportPreview(reportType,reportYear){
   const type=typeof reportType==='string'?reportType:'summary';
   const y=reportYear||year;
-  const m=document.querySelector('#modal');
+  const m=workspaceDialog();
   if(!m)return;
   const obs=sortReportByDueDate(obligations());
   const todayFormatted=new Date().toLocaleDateString('en-PH',{year:'numeric',month:'short',day:'numeric'});
@@ -791,7 +791,7 @@ function openUserAccountModal(userId,initialData=null){
   const user=userId?users.find(u=>u.id===Number(userId)):null;
   const isEditing=!!user;
   const isCurrent=isEditing&&user.username.toLowerCase()===currentAuth.username.toLowerCase();
-  const m=document.querySelector('#modal');
+  const m=workspaceDialog();
   if(!m)return;
 
   const totalActive=users.filter(u=>u.is_active).length;
@@ -876,10 +876,7 @@ function openUserAccountModal(userId,initialData=null){
     m.innerHTML='';
   });
   m.querySelector('#delete-user-from-modal')?.addEventListener('click',()=>{
-    closeModal(m,()=>{
-      m.innerHTML='';
-      confirmDeleteUser(user.id,user.username);
-    });
+    confirmDeleteUser(user.id,user.username);
   });
   m.querySelector('#user-account-form')?.addEventListener('submit',e=>{
     e.preventDefault();
@@ -969,7 +966,7 @@ function openUserAccountModal(userId,initialData=null){
 }
 
 function confirmCreateUser(userData,onBack){
-  const m=document.querySelector('#modal');
+  const m=workspaceDialog();
   if(!m)return;
   m.innerHTML=`
     <h2>Confirm New User Account</h2>
@@ -1008,17 +1005,19 @@ function confirmCreateUser(userData,onBack){
   m.showModal();
 
   m.querySelector('#btn-back-create-user')?.addEventListener('click',()=>{
-    if(onBack) onBack();
+    dismissWorkspaceDialog(m);
   });
 
   m.querySelector('#btn-confirm-create-user')?.addEventListener('click',()=>{
     const confirmAlert=m.querySelector('#confirm-create-error-alert');
     try{
       persistWorkstationUser(userData);
+      const editor=m.workspaceParent;
       closeModal(m,()=>{
         m.innerHTML='';
       });
       try{m.close();}catch(e){}
+      if(editor?.open)editor.close();
       m.classList.remove('closing');
       m.innerHTML='';
       render();
@@ -1034,7 +1033,7 @@ function confirmCreateUser(userData,onBack){
 }
 
 function confirmDeleteUser(userId,username){
-  const m=document.querySelector('#modal');
+  const m=workspaceDialog();
   if(!m)return;
   m.innerHTML=`
     <h2>Delete User Account?</h2>
@@ -1055,8 +1054,10 @@ function confirmDeleteUser(userId,username){
   m.querySelector('#confirm-delete-user-btn')?.addEventListener('click',()=>{
     try{
       deleteWorkstationUser(userId);
+      const editor=m.workspaceParent;
       closeModal(m,()=>{m.innerHTML='';});
       try{m.close();}catch(e){}
+      if(editor?.open)editor.close();
       m.classList.remove('closing');
       m.innerHTML='';
       render();
@@ -1138,7 +1139,7 @@ document.querySelector('footer span').textContent=database?'Saved to SQLite on t
 document.addEventListener('click',async e=>{
   if(e.target.closest('#company-logo-preview')){
     const profile=companyProfileDraft||getWorkspaceCompanyProfile();
-    const m=document.querySelector('#modal');
+    const m=workspaceDialog();
     m.classList.remove('report-modal','closing');
     m.innerHTML=`<h2>Company logo</h2><p>PNG, JPEG, WebP, GIF, BMP, or ICO. Maximum 5 MB.</p><div id="company-logo-modal-preview" class="company-logo-modal-preview">${profile.logo?`<img src="${profile.logo}" alt="Company logo">`:esc(getUserInitials(profile.name))}</div><p id="company-logo-modal-status" role="status">Changes are saved with Save company profile.</p><div class="modal-actions"><button type="button" class="btn" id="remove-company-logo">Remove logo</button><button type="button" class="btn primary" id="change-company-logo">Change logo</button><button type="button" class="btn" id="close-company-logo">Close</button></div>`;
     m.querySelector('#change-company-logo').onclick=()=>document.querySelector('#company-logo-input').click();
