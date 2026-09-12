@@ -929,3 +929,11 @@ body { background-color: #e4eaf1; }
 #discard-dialog::backdrop{background:rgba(16,37,61,.3)}
 .workspace-child-dialog{width:min(630px,calc(100vw - 40px));max-height:82vh;box-sizing:border-box;overflow:auto}
 .workspace-child-dialog::backdrop{background:rgba(16,37,61,.24);backdrop-filter:none}
+.has-user-photo{overflow:hidden;padding:0}
+.header-user-avatar{border:0;cursor:pointer}
+.header-user-avatar:focus-visible{outline:3px solid var(--blue);outline-offset:3px}
+.has-user-photo img{display:block;width:100%;height:100%;object-fit:cover;border-radius:inherit}
+.user-photo-editor{display:flex;align-items:center;gap:14px;margin:8px 0 18px}
+.user-photo-editor .avatar{width:68px;height:68px;min-width:68px;font-size:21px}
+.user-photo-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.user-photo-actions small{width:100%;color:var(--muted)}

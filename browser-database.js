@@ -18,7 +18,9 @@
     saveForms:(data,revision)=>call('forms',data,revision),
     getUsers:()=>call('users:list'),
     saveUser:(userData)=>call('users:save',userData),
-    deleteUser:(id)=>call('users:delete',{id})
+    deleteUser:(id)=>call('users:delete',{id}),
+    getCompanyProfile:()=>call('company:profile:get'),
+    saveCompanyProfile:(profile)=>call('company:profile:save',profile)
   };
   try{window.taxguardDB.load();}catch(error){
     document.querySelector('#content').textContent=error.message;

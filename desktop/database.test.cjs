@@ -300,6 +300,39 @@ test('User account management: create new users, edit current user, safeguards, 
 
   s.close();
 });
+test('Each user profile picture persists separately and can be removed',()=>{
+  const {file}=fixture();
+  let store=new Store(file,root);
+  const photo='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/6yQAAAAASUVORK5CYII=';
+  try{
+    const admin=store.getUsers().find(u=>u.username==='admin');
+    store.saveUser({id:admin.id,username:'admin',company_name:admin.company_name,role:'Admin',profile_photo:photo});
+    store.saveUser({username:'staffphoto',password:'secret123',role:'Staff',profile_photo:''});
+    assert.equal(store.getUsers().find(u=>u.id===admin.id).profile_photo,photo);
+    assert.equal(store.login('admin','taxguard2026').profile_photo,photo);
+    assert.equal(store.getUsers().find(u=>u.username==='staffphoto').profile_photo,'');
+    assert.throws(()=>store.saveUser({id:admin.id,username:'admin',profile_photo:'data:text/html;base64,QQ=='}),/Profile picture/);
+    store.close();store=new Store(file,root);
+    assert.equal(store.getUsers().find(u=>u.id===admin.id).profile_photo,photo);
+    store.saveUser({id:admin.id,username:'admin',company_name:admin.company_name,role:'Admin',profile_photo:''});
+    assert.equal(store.login('admin','taxguard2026').profile_photo,'');
+  }finally{store.close();}
+});
+test('Existing user tables gain the profile picture field without losing accounts',()=>{
+  const {file}=fixture();
+  const {DatabaseSync}=require('node:sqlite');
+  const legacy=new DatabaseSync(file);
+  legacy.exec("CREATE TABLE users(id INTEGER PRIMARY KEY AUTOINCREMENT,username TEXT NOT NULL UNIQUE,company_name TEXT NOT NULL,role TEXT NOT NULL,password_hash TEXT NOT NULL,is_active INTEGER NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP,updated_at TEXT DEFAULT CURRENT_TIMESTAMP)");
+  legacy.prepare("INSERT INTO users(username,company_name,role,password_hash,is_active) VALUES('legacy','Old Firm','Staff','hash',1)").run();
+  legacy.close();
+  const store=new Store(file,root);
+  try{
+    const user=store.getUsers().find(u=>u.username==='legacy');
+    assert.ok(user);
+    assert.equal(user.profile_photo,'');
+    assert.equal(store.db.prepare('PRAGMA table_info(users)').all().filter(c=>c.name==='profile_photo').length,1);
+  }finally{store.close();}
+});
 
 test('Floating notifications render in Top Layer above modal backdrops and user account modal dismisses', ()=>{
   const indexHtml = fs.readFileSync(path.join(root,'index.html'),'utf8');
@@ -336,7 +369,7 @@ test('Floating notifications render in Top Layer above modal backdrops and user 
 test('Avatar initials resolve dynamically from username and firm (e.g. FeviRuth -> FR)', ()=>{
   const appJs = fs.readFileSync(path.join(root,'app.js'),'utf8');
   assert.equal(appJs.includes('function getUserInitials(name){'), true);
-  assert.equal(appJs.includes('headerAvatar.textContent=getUserInitials(authInfo.username);'), true);
+  assert.equal(appJs.includes('setUserAvatarSlot(headerAvatar,authInfo.username,authInfo.profile_photo);'), true);
 
   // Evaluate the getUserInitials function logic
   const vm = require('vm');

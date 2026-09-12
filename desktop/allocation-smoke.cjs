@@ -172,4 +172,38 @@ module.exports=async function(win,root){
     account.close();
   }.toString()+')()');
   console.log('STACKED WORKSPACE DIALOGS PASS');
+  const iconBytes=require('node:fs').readFileSync(require('node:path').join(root,'desktop/icon.png')).toString('base64');
+  await win.webContents.executeJavaScript(`(async()=>{
+    go('settings');
+    const admin=window.taxguardDB.getUsers().find(u=>u.username==='admin');
+    document.querySelector('.header-user-avatar').click();
+    const editor=document.querySelector('#modal'),input=editor.querySelector('#user-photo-input');
+    const transfer=new DataTransfer();
+    transfer.items.add(new File([Uint8Array.from(atob('${iconBytes}'),c=>c.charCodeAt(0))],'portrait.png',{type:'image/png'}));
+    input.files=transfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));
+    await new Promise(r=>setTimeout(r,180));
+    if(!editor.querySelector('#user-photo-preview img'))throw Error('User photo preview missing');
+    editor.querySelector('#user-account-form').requestSubmit();
+    await new Promise(r=>setTimeout(r,240));
+    const saved=window.taxguardDB.getUsers().find(u=>u.username==='admin').profile_photo;
+    if(!saved?.startsWith('data:image/png;base64,')||!document.querySelector('.header-right .avatar img'))throw Error('User photo was not saved or displayed');
+    openUserAccountModal(admin.id);
+    document.querySelector('#remove-user-photo').click();
+    document.querySelector('#user-account-form').requestSubmit();
+    await new Promise(r=>setTimeout(r,240));
+    if(window.taxguardDB.getUsers().find(u=>u.username==='admin').profile_photo||document.querySelector('.header-right .avatar img'))throw Error('User photo removal failed');
+  })()`);
+  console.log('USER PROFILE PHOTO PASS');
+  await win.webContents.executeJavaScript(`window.taxguardDB.saveCompanyProfile({name:'Startup Logo Test',logo:'data:image/png;base64,${iconBytes}'})`);
+  await win.loadFile(path.join(root,'index.html'));
+  await win.webContents.executeJavaScript('('+async function(){
+    const logo=document.querySelector('.firm .avatar img');
+    if(!logo||!logo.src.startsWith('data:image/png;base64,'))throw Error('Company logo missing on entry');
+    attemptLogin('admin','taxguard2026');
+    await new Promise(r=>setTimeout(r,550));
+    if(!document.querySelector('.firm .avatar img'))throw Error('Company logo lost after sign-in');
+    go('clients');
+    if(!document.querySelector('.firm .avatar img'))throw Error('Company logo lost during navigation');
+  }.toString()+')()');
+  console.log('COMPANY LOGO STARTUP PASS');
 };

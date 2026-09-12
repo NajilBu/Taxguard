@@ -28,6 +28,8 @@ class Store {
     this.db = new DatabaseSync(filename);
     this.db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;');
     this.db.exec(fs.readFileSync(path.join(root,'database/schema.sql'),'utf8'));
+    if(!this.db.prepare('PRAGMA table_info(users)').all().some(c=>c.name==='profile_photo'))
+      this.db.exec("ALTER TABLE users ADD COLUMN profile_photo TEXT NOT NULL DEFAULT ''");
     const cols=this.db.prepare('PRAGMA table_info(forms)').all();
     if(!cols.some(c=>c.name==='schedule_json')) this.db.exec("ALTER TABLE forms ADD COLUMN schedule_json TEXT NOT NULL DEFAULT '{}'");
     this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS unique_client_deadline ON filings(client_id,deadline_id); PRAGMA user_version=1;');
@@ -159,7 +161,7 @@ class Store {
     return this.revision();
   }
   getUsers(){
-    return this.db.prepare('SELECT id, username, company_name, role, is_active, created_at, updated_at FROM users ORDER BY id ASC').all();
+    return this.db.prepare('SELECT id, username, company_name, role, is_active, profile_photo, created_at, updated_at FROM users ORDER BY id ASC').all();
   }
   getCompanyName(){
     return this.getCompanyProfile().name;
@@ -198,6 +200,10 @@ class Store {
     const validRoles=['Admin','Staff','Tax Associate','Auditor'];
     const role=validRoles.includes(user.role)?user.role:'Staff';
     const active=user.is_active!==undefined?(user.is_active?1:0):1;
+    const photo=user.profile_photo;
+    if(photo!==undefined&&(typeof photo!=='string'||photo.length>3*1024*1024||
+      (photo&&!/^data:image\/(png|jpeg|webp);base64,[a-zA-Z0-9+/]+={0,2}$/.test(photo))))
+      throw Error('Profile picture must be a PNG, JPEG, or WebP image smaller than 2 MB.');
 
     if(user.id){
       const id=Number(user.id);
@@ -216,6 +222,7 @@ class Store {
         this.db.prepare("UPDATE users SET company_name=?, role=?, is_active=?, updated_at=CURRENT_TIMESTAMP WHERE id=?")
           .run(company,role,active,id);
       }
+      if(photo!==undefined)this.db.prepare('UPDATE users SET profile_photo=? WHERE id=?').run(photo,id);
       try{
         if(existing.username.toLowerCase()==='admin'||id===1){
           const sql="UPDATE company_login SET company_name=?, is_active=?"+(user.password?.trim()?", password_hash=?":"")+" WHERE id=1";
@@ -228,8 +235,8 @@ class Store {
       if(duplicate)throw Error('Username already exists.');
       required(user.password,'Password');
       if(user.password.trim().length<6)throw Error('Password must be at least 6 characters.');
-      this.db.prepare("INSERT INTO users(username,company_name,role,password_hash,is_active) VALUES(?,?,?,?,?)")
-        .run(u,company,role,hashPassword(user.password.trim()),active);
+      this.db.prepare("INSERT INTO users(username,company_name,role,password_hash,is_active,profile_photo) VALUES(?,?,?,?,?,?)")
+        .run(u,company,role,hashPassword(user.password.trim()),active,photo||'');
     }
     return this.getUsers();
   }
@@ -247,14 +254,14 @@ class Store {
     required(username,'Username');
     required(password,'Password');
     const u=username.trim();
-    let user=this.db.prepare('SELECT id,company_name,username,role,password_hash,is_active FROM users WHERE LOWER(username)=LOWER(?)').get(u);
+    let user=this.db.prepare('SELECT id,company_name,username,role,password_hash,is_active,profile_photo FROM users WHERE LOWER(username)=LOWER(?)').get(u);
     if(!user){
       const old=this.db.prepare('SELECT id,company_name,username,password_hash,is_active FROM company_login WHERE LOWER(username)=LOWER(?)').get(u);
       if(old)user={...old,role:'Admin'};
     }
     if(!user||user.is_active!==1)throw Error('Invalid username or password.');
     if(user.password_hash!==hashPassword(password))throw Error('Invalid username or password.');
-    return {authenticated:true,company:this.getCompanyName(),username:user.username,role:user.role||'Admin'};
+    return {authenticated:true,company:this.getCompanyName(),username:user.username,role:user.role||'Admin',profile_photo:user.profile_photo||''};
   }
   importWorkspace(data){
     if(this.db.prepare('SELECT COUNT(*) n FROM clients').get().n)throw Error('Import is available only before client records have been added.');

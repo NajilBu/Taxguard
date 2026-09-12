@@ -669,6 +669,27 @@ function getCurrentUserAuth(){
     return {username:'admin',company:'EOO Tax & Accounting',role:'Admin'};
   }
 }
+function userPhotoMarkup(username,photo){
+  return typeof photo==='string'&&/^data:image\/(png|jpeg|webp);base64,[a-zA-Z0-9+/]+={0,2}$/.test(photo)
+    ?`<img src="${photo}" alt="${esc(username)} profile picture">`
+    :esc(getUserInitials(username));
+}
+function readUserProfilePhoto(file){
+  return new Promise((resolve,reject)=>{
+    if(!['image/png','image/jpeg','image/webp'].includes(file.type))return reject(Error('Choose a PNG, JPEG, or WebP image.'));
+    if(file.size>2*1024*1024)return reject(Error('Profile picture must be smaller than 2 MB.'));
+    const reader=new FileReader();
+    reader.onerror=()=>reject(Error('Could not read that image.'));
+    reader.onload=()=>{
+      const data=String(reader.result||'');
+      const image=new Image();
+      image.onload=()=>resolve(data);
+      image.onerror=()=>reject(Error('The selected file is not a valid image.'));
+      image.src=data;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 function getWorkspaceCompanyName(){
   if(window.taxguardDB?.getCompanyName){
@@ -677,11 +698,16 @@ function getWorkspaceCompanyName(){
   return localStorage.getItem('taxguard_company_name')||getCurrentUserAuth().company||'EOO Tax & Accounting';
 }
 
+let lastCompanyProfile=null;
 function getWorkspaceCompanyProfile(){
   if(window.taxguardDB?.getCompanyProfile){
-    try{return window.taxguardDB.getCompanyProfile();}catch(e){}
+    try{
+      const profile=window.taxguardDB.getCompanyProfile();
+      lastCompanyProfile=profile;
+      return profile;
+    }catch(e){}
   }
-  return {name:getWorkspaceCompanyName(),logo:localStorage.getItem('taxguard_company_logo')||''};
+  return lastCompanyProfile||{name:getWorkspaceCompanyName(),logo:localStorage.getItem('taxguard_company_logo')||''};
 }
 let companyProfileDraft=null;
 
@@ -698,6 +724,7 @@ function setCompanyLogoSlot(element,logo,company){
 }
 
 function applyWorkspaceCompanyProfile(profile){
+  lastCompanyProfile=profile;
   const company=profile.name;
   const currentAuth=getCurrentUserAuth();
   const updatedAuth={...currentAuth,company};
@@ -753,6 +780,7 @@ function persistWorkstationUser(userData){
       users[idx]={
         ...users[idx],
         company_name:userData.company_name||users[idx].company_name,
+        profile_photo:userData.profile_photo!==undefined?userData.profile_photo:(users[idx].profile_photo||''),
         role:userData.role||users[idx].role,
         is_active:userData.is_active!==undefined?(userData.is_active?1:0):users[idx].is_active,
         updated_at:new Date().toISOString()
@@ -765,6 +793,7 @@ function persistWorkstationUser(userData){
       id:Date.now(),
       username:userData.username,
       company_name:userData.company_name||'EOO Tax & Accounting',
+      profile_photo:userData.profile_photo||'',
       role:userData.role||'Staff',
       password:userData.password,
       is_active:userData.is_active!==undefined?(userData.is_active?1:0):1,
@@ -803,11 +832,17 @@ function openUserAccountModal(userId,initialData=null){
   const roleVal=initialData?.role!==undefined?initialData.role:(user?.role||'Staff');
   const isActiveVal=initialData?.is_active!==undefined?initialData.is_active:((!user||user.is_active)?1:0);
   const passwordVal=initialData?.password!==undefined?initialData.password:'';
+  let photoDraft=initialData?.profile_photo!==undefined?initialData.profile_photo:(user?.profile_photo||'');
 
   m.innerHTML=`
     <h2>${isEditing?(isCurrent?'Edit Your Account Info':'Edit User Account'):'Add New User Account'}</h2>
     <p>${isEditing?'Update workstation identity, display name, role, or change password.':'Create new login credentials for staff or tax associates.'}</p>
     <form id="user-account-form" style="margin-top:16px">
+      <label>Profile picture</label>
+      <div class="user-photo-editor"><span class="avatar ${photoDraft?'has-user-photo':''}" id="user-photo-preview">${userPhotoMarkup(usernameVal||'New user',photoDraft)}</span>
+        <div class="user-photo-actions"><button type="button" class="btn" id="choose-user-photo">Change picture</button><button type="button" class="btn" id="remove-user-photo" ${photoDraft?'':'disabled'}>Remove</button><small>PNG, JPEG, or WebP. Maximum 2 MB.</small></div></div>
+      <input type="file" id="user-photo-input" accept="image/png,image/jpeg,image/webp" hidden>
+      <small id="user-photo-error" role="status" style="color:#b45309"></small>
       <label for="user-input-username">Username</label>
       <input id="user-input-username" name="username" required ${isEditing?'readonly':''} value="${esc(usernameVal)}" placeholder="e.g. jdelacruz" pattern="^[a-zA-Z0-9._ -]+$" title="Letters, numbers, spaces, dots, dashes, or underscores only" style="${isEditing?'background:#f1f5f9;cursor:not-allowed':''}">
       ${isEditing?'':'<small style="display:block;color:#64748b;font-size:11px;margin-top:3px">Login username (letters, numbers, spaces, dots, dashes, underscores)</small>'}
@@ -856,6 +891,21 @@ function openUserAccountModal(userId,initialData=null){
 
   m.classList.remove('closing');
   m.showModal();
+  const photoInput=m.querySelector('#user-photo-input');
+  const photoPreview=m.querySelector('#user-photo-preview');
+  const updatePhotoPreview=()=>{
+    photoPreview.innerHTML=userPhotoMarkup(m.querySelector('#user-input-username').value||'New user',photoDraft);
+    photoPreview.classList.toggle('has-user-photo',!!photoDraft);
+    m.querySelector('#remove-user-photo').disabled=!photoDraft;
+  };
+  m.querySelector('#choose-user-photo').onclick=()=>photoInput.click();
+  m.querySelector('#remove-user-photo').onclick=()=>{photoDraft='';photoInput.value='';updatePhotoPreview();};
+  photoInput.onchange=async()=>{
+    if(!photoInput.files?.[0])return;
+    try{photoDraft=await readUserProfilePhoto(photoInput.files[0]);m.querySelector('#user-photo-error').textContent='';updatePhotoPreview();}
+    catch(error){m.querySelector('#user-photo-error').textContent=error.message;photoInput.value='';}
+  };
+  m.querySelector('#user-input-username').addEventListener('input',updatePhotoPreview);
 
   const pwInput = m.querySelector('#user-input-password');
   const pwToggle = m.querySelector('#toggle-user-password');
@@ -895,6 +945,7 @@ function openUserAccountModal(userId,initialData=null){
       company_name,
       role,
       is_active,
+      profile_photo:photoDraft,
       password:password.trim()||undefined
     };
 
@@ -930,7 +981,7 @@ function openUserAccountModal(userId,initialData=null){
       persistWorkstationUser(accountData);
 
       if(isCurrent||(!isEditing&&user?.username===currentAuth.username)){
-        const updatedAuth={...currentAuth,company:company_name,role};
+        const updatedAuth={...currentAuth,company:company_name,role,profile_photo:photoDraft};
         sessionStorage.setItem('taxguard_auth',JSON.stringify(updatedAuth));
         const firmEl=document.querySelector('.firm .firm-info');
         if(firmEl) firmEl.innerHTML=`${esc(company_name)}<small>Compliance team</small>`;
@@ -938,13 +989,9 @@ function openUserAccountModal(userId,initialData=null){
         if(loginDisplay) loginDisplay.textContent=company_name;
         const headerAvatar=document.querySelector('.header-right .avatar');
         if(headerAvatar){
-          headerAvatar.title=`Signed in as ${esc(updatedAuth.username)}`;
-          headerAvatar.textContent=getUserInitials(updatedAuth.username);
+          setUserAvatarSlot(headerAvatar,updatedAuth.username,photoDraft);
         }
-        const firmAvatar=document.querySelector('.firm .avatar');
-        if(firmAvatar&&company_name){
-          firmAvatar.textContent=getUserInitials(company_name);
-        }
+        window.refreshCompanyProfile?.();
       }
 
       closeModal(m,()=>{
@@ -964,6 +1011,11 @@ function openUserAccountModal(userId,initialData=null){
     }
   });
 }
+document.querySelector('.header-user-avatar')?.addEventListener('click',()=>{
+  const username=getCurrentUserAuth().username;
+  const user=fetchWorkstationUsers().find(u=>u.username.toLowerCase()===String(username||'').toLowerCase());
+  if(user)openUserAccountModal(user.id);
+});
 
 function confirmCreateUser(userData,onBack){
   const m=workspaceDialog();
@@ -1095,7 +1147,7 @@ settings=function(){
     return `<tr class="user-account-row" data-user-id="${u.id}" role="button" tabindex="0" aria-label="Edit user ${esc(u.username)}">
       <td style="padding:12px 16px">
         <div style="display:flex;align-items:center;gap:10px">
-          <span class="avatar" style="width:30px;height:30px;min-width:30px;font-size:11px;font-weight:700;background:#e2e8f0;color:#334e68">${initials}</span>
+          <span class="avatar ${u.profile_photo?'has-user-photo':''}" style="width:30px;height:30px;min-width:30px;font-size:11px;font-weight:700;background:#e2e8f0;color:#334e68">${userPhotoMarkup(u.username,u.profile_photo)}</span>
           <div>
             <strong style="font-size:13px">${esc(u.username)}</strong>
             ${isCurrent?'<span class="badge" style="background:#e8f4fd;color:#2766db;font-weight:700;margin-left:6px;font-size:9.5px;vertical-align:middle">Current Account</span>':''}
@@ -1259,6 +1311,7 @@ window.addEventListener('focus',()=>{
   // Native file pickers return focus before delivering the selected file.
   // Replacing this form here detaches its input and loses that event.
   if(document.querySelector('#company-profile-form'))return;
+  window.refreshCompanyProfile?.();
   if(database&&!document.querySelector('#modal').open){try{restoreDatabase();render();}catch(error){notify('Could not refresh records: '+error.message);}}
 });
 render();
