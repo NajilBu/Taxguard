@@ -30,6 +30,23 @@ test('Compliance statuses agree across clients and filings at the due-date bound
   dueToday.filing={date:'2026-09-11'};
   assert.equal(ctx.filingStatus(dueToday),'Complete');
 });
+test('Client directory search, tax and business filters combine with alphabetical sorting',()=>{
+  const vm=require('node:vm');
+  const source=fs.readFileSync(path.join(root,'app.js'),'utf8');
+  const code=source.slice(source.indexOf('function filteredClientRows('),source.indexOf('function filingStatus('));
+  const context=vm.createContext({});
+  vm.runInContext(code,context);
+  const clients=[
+    {name:'Zeta Stores',tin:'111',tax:'VAT',type:'Corporation'},
+    {name:'Alpha Shop',tin:'222',tax:'NVAT',type:'Sole proprietorship'},
+    {name:'Beta Stores',tin:'333',tax:'VAT',type:'Corporation'}
+  ];
+  const names=(search,tax,type,sort)=>Array.from(context.filteredClientRows(clients,search,tax,type,sort),c=>c.name);
+  assert.deepEqual(names('','all','all','az'),['Alpha Shop','Beta Stores','Zeta Stores']);
+  assert.deepEqual(names('stores','VAT','Corporation','za'),['Zeta Stores','Beta Stores']);
+  assert.deepEqual(names('333','VAT','all','az'),['Beta Stores']);
+  assert.deepEqual(names('','NVAT','Corporation','az'),[]);
+});
 function fixture(){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'taxguard-db-test-'));return {dir,file:path.join(dir,'taxguard.db')}}
 const client={id:1,name:'Test client',tin:'123-456-789-000',type:'Corporation',tax:'VAT',status:'Active',start:'2025-01-01',remarks:'Test',forms:['2550-Q']};
 test('Years outside the old range save, reopen, and retain deadline edits',()=>{
