@@ -33,6 +33,8 @@ class Store {
       this.db.exec("ALTER TABLE users ADD COLUMN profile_photo TEXT NOT NULL DEFAULT ''");
     if(!this.db.prepare('PRAGMA table_info(clients)').all().some(c=>c.name==='pulled_out_at'))
       this.db.exec('ALTER TABLE clients ADD COLUMN pulled_out_at TEXT');
+    if(!this.db.prepare('PRAGMA table_info(clients)').all().some(c=>c.name==='service_history_json'))
+      this.db.exec("ALTER TABLE clients ADD COLUMN service_history_json TEXT NOT NULL DEFAULT '[]'");
     if(!this.db.prepare('PRAGMA table_info(clients)').all().some(c=>c.name==='custom_fields_json'))
       this.db.exec("ALTER TABLE clients ADD COLUMN custom_fields_json TEXT NOT NULL DEFAULT '{}'");
     const cols=this.db.prepare('PRAGMA table_info(forms)').all();
@@ -59,7 +61,7 @@ class Store {
   }
   load() {
     const forms=this.db.prepare('SELECT * FROM forms ORDER BY id').all().map(f=>({...JSON.parse(f.schedule_json),id:f.code,name:f.name,frequency:f.frequency}));
-    const clients=this.db.prepare('SELECT * FROM clients ORDER BY id').all().map(c=>({id:c.id,name:c.name,tin:c.tin,type:c.business_type,tax:c.tax_type,status:c.status,start:c.start_of_filing,pulledOutAt:c.pulled_out_at||undefined,customFields:JSON.parse(c.custom_fields_json||'{}'),remarks:c.remarks,forms:this.db.prepare('SELECT f.code FROM client_forms cf JOIN forms f ON f.id=cf.form_id WHERE cf.client_id=?').all(c.id).map(f=>f.code)}));
+    const clients=this.db.prepare('SELECT * FROM clients ORDER BY id').all().map(c=>{const history=JSON.parse(c.service_history_json||'[]');return {id:c.id,name:c.name,tin:c.tin,type:c.business_type,tax:c.tax_type,status:c.status,start:c.start_of_filing,pulledOutAt:c.pulled_out_at||undefined,serviceHistory:history.length?history:c.status==='Pulled out'&&c.pulled_out_at?[{end:c.pulled_out_at,restart:null}]:[],customFields:JSON.parse(c.custom_fields_json||'{}'),remarks:c.remarks,forms:this.db.prepare('SELECT f.code FROM client_forms cf JOIN forms f ON f.id=cf.form_id WHERE cf.client_id=?').all(c.id).map(f=>f.code)};});
     for(const c of clients){
       const profiles=this.db.prepare('SELECT tax_year,profile_json FROM client_year_profiles WHERE client_id=?').all(c.id);
       if(profiles.length)c.yearProfiles=Object.fromEntries(profiles.map(p=>[p.tax_year,JSON.parse(p.profile_json)]));
@@ -107,9 +109,19 @@ class Store {
         if(!date(c.start))throw Error('Invalid filing start date.');
         if(!['Active','Inactive','Closed','For closure','Pulled out'].includes(c.status))throw Error('Invalid client status.');
         if(c.status==='Pulled out'&&(!date(c.pulledOutAt)||c.pulledOutAt<c.start))throw Error('Pullout date must be on or after the start of filing.');
+        const serviceHistory=c.serviceHistory|| (c.status==='Pulled out'?[{end:c.pulledOutAt,restart:null}]:[]);
+        if(!Array.isArray(serviceHistory)||serviceHistory.length>100)throw Error('Invalid service history.');
+        for(let i=0;i<serviceHistory.length;i++){
+          const interval=serviceHistory[i];
+          if(!interval||!date(interval.end)||interval.end<c.start||interval.restart!==null&&(!date(interval.restart)||interval.restart<interval.end))throw Error('Invalid pullout or restart date.');
+          if(i&&(!serviceHistory[i-1].restart||interval.end<serviceHistory[i-1].restart))throw Error('Service periods must be chronological.');
+          if(i<serviceHistory.length-1&&!interval.restart)throw Error('Only the current pullout may remain open.');
+        }
+        if(c.status==='Pulled out'&&(!serviceHistory.length||serviceHistory.at(-1).end!==c.pulledOutAt||serviceHistory.at(-1).restart!==null))throw Error('Current pullout does not match service history.');
+        if(c.status!=='Pulled out'&&serviceHistory.at(-1)?.restart===null)throw Error('Reactivate the client before clearing the pullout date.');
         if(c.customFields!==undefined&&(!c.customFields||typeof c.customFields!=='object'||Array.isArray(c.customFields)||Object.keys(c.customFields).length>30||Object.entries(c.customFields).some(([key,value])=>key.length>80||typeof value!=='string'||value.length>1000)))throw Error('Invalid custom client fields.');
         required(c.type,'Business type');
-        this.db.prepare('INSERT INTO clients(id,name,tin,business_type,tax_type,status,start_of_filing,remarks,pulled_out_at,custom_fields_json) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,tin=excluded.tin,business_type=excluded.business_type,tax_type=excluded.tax_type,status=excluded.status,start_of_filing=excluded.start_of_filing,remarks=excluded.remarks,pulled_out_at=excluded.pulled_out_at,custom_fields_json=excluded.custom_fields_json').run(c.id,c.name.trim(),c.tin,c.type,c.tax,c.status,c.start,c.remarks||'',c.status==='Pulled out'?c.pulledOutAt:null,JSON.stringify(c.customFields||{}));
+        this.db.prepare('INSERT INTO clients(id,name,tin,business_type,tax_type,status,start_of_filing,remarks,pulled_out_at,service_history_json,custom_fields_json) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,tin=excluded.tin,business_type=excluded.business_type,tax_type=excluded.tax_type,status=excluded.status,start_of_filing=excluded.start_of_filing,remarks=excluded.remarks,pulled_out_at=excluded.pulled_out_at,service_history_json=excluded.service_history_json,custom_fields_json=excluded.custom_fields_json').run(c.id,c.name.trim(),c.tin,c.type,c.tax,c.status,c.start,c.remarks||'',c.status==='Pulled out'?c.pulledOutAt:null,JSON.stringify(serviceHistory),JSON.stringify(c.customFields||{}));
         if(!Array.isArray(c.forms))throw Error('Invalid required forms.');
         this.db.prepare('DELETE FROM client_forms WHERE client_id=?').run(c.id);
         for(const code of new Set(c.forms)){const f=this.db.prepare('SELECT id FROM forms WHERE code=?').get(code);if(!f)throw Error(`Unknown required form: ${code}`);this.db.prepare('INSERT INTO client_forms VALUES(?,?)').run(c.id,f.id);}

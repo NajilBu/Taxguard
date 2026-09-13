@@ -67,8 +67,30 @@ test('Pullout date survives SQLite reload with client history intact',()=>{
   const loaded=store.load();
   assert.equal(loaded.clients[0].status,'Pulled out');
   assert.equal(loaded.clients[0].pulledOutAt,'2026-06-30');
+  assert.deepEqual(loaded.clients[0].serviceHistory,[{end:'2026-06-30',restart:null}]);
   assert.equal(loaded.filings['1:2026:2550-Q:Q1'].reference,'HISTORY');
+  const restored={...loaded.clients[0],status:'Active',pulledOutAt:undefined,serviceHistory:[{end:'2026-06-30',restart:'2026-08-01'}]};
+  store.saveState({clients:[restored],filings:loaded.filings},loaded.revision);
+  store.close();store=new Store(file,root);
+  const afterRestart=store.load();
+  assert.equal(afterRestart.clients[0].status,'Active');
+  assert.deepEqual(afterRestart.clients[0].serviceHistory,[{end:'2026-06-30',restart:'2026-08-01'}]);
+  assert.equal(afterRestart.filings['1:2026:2550-Q:Q1'].reference,'HISTORY');
+  store.saveState({clients:[{...afterRestart.clients[0],serviceHistory:[{end:'2026-06-30',restart:'2026-06-30'}]}],filings:afterRestart.filings},afterRestart.revision);
+  assert.deepEqual(store.load().clients[0].serviceHistory,[{end:'2026-06-30',restart:'2026-06-30'}]);
   store.close();
+});
+test('Service gaps exclude unfiled periods but retain historical filings',()=>{
+  const vm=require('node:vm');
+  const source=fs.readFileSync(path.join(root,'app.js'),'utf8');
+  const code=source.slice(source.indexOf('function servicePeriodApplies('),source.indexOf('function obligationsForYear('));
+  const context=vm.createContext({});vm.runInContext(code,context);
+  const client={serviceHistory:[{end:'2026-06-30',restart:'2026-08-01'},{end:'2027-03-31',restart:null}]};
+  assert.equal(context.servicePeriodApplies(client,'2026-06-30',null),true);
+  assert.equal(context.servicePeriodApplies(client,'2026-07-31',null),false);
+  assert.equal(context.servicePeriodApplies(client,'2026-07-31',{date:'2026-08-02'}),true);
+  assert.equal(context.servicePeriodApplies(client,'2026-08-31',null),true);
+  assert.equal(context.servicePeriodApplies(client,'2027-04-30',null),false);
 });
 test('Client documents persist and remain linked to filing records',()=>{
   const {file}=fixture();let store=new Store(file,root);

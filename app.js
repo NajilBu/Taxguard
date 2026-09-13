@@ -79,7 +79,12 @@ function ensureAutomaticYear(){
   state={...state,clients};
   try{save();}catch{if(!database)state=previous;}
 }
-function obligationsForYear(y){return state.clients.map(c=>clientForYear(c,y)).flatMap(c=>forms.filter(f=>c.forms.includes(f.id)).flatMap(f=>f.periods.filter(p=>!c.periods?.[f.id]||c.periods[f.id].includes(p)).map(p=>{let i=f.periods.indexOf(p),end=p==='Annual'?`${y}-12-31`:p.startsWith('Q')?`${y}-${String((i+1)*3).padStart(2,'0')}-31`:`${y}-${String(i+1).padStart(2,'0')}-31`;const filingKey=`${c.id}:${y}:${f.id}:${p}`;return {c,f,p,end,due:due(f,p,y),key:filingKey,filing:state.filings[filingKey]}}).filter(o=>o.end>=c.start&&(!c.pulledOutAt||o.end<=c.pulledOutAt||o.filing))))}
+function servicePeriodApplies(client,periodEnd,filing){
+  if(filing)return true;
+  const history=client.serviceHistory?.length?client.serviceHistory:client.pulledOutAt?[{end:client.pulledOutAt,restart:null}]:[];
+  return !history.some(interval=>periodEnd>interval.end&&(!interval.restart||periodEnd<interval.restart));
+}
+function obligationsForYear(y){return state.clients.map(c=>clientForYear(c,y)).flatMap(c=>forms.filter(f=>c.forms.includes(f.id)).flatMap(f=>f.periods.filter(p=>!c.periods?.[f.id]||c.periods[f.id].includes(p)).map(p=>{let i=f.periods.indexOf(p),end=p==='Annual'?`${y}-12-31`:p.startsWith('Q')?`${y}-${String((i+1)*3).padStart(2,'0')}-31`:`${y}-${String(i+1).padStart(2,'0')}-31`;const filingKey=`${c.id}:${y}:${f.id}:${p}`;return {c,f,p,end,due:due(f,p,y),key:filingKey,filing:state.filings[filingKey]}}).filter(o=>o.end>=c.start&&servicePeriodApplies(c,o.end,o.filing))))}
 function obligations(){return obligationsForYear(year)}
 function clientFiveYearSummary(id,endingYear){
   return Array.from({length:5},(_,i)=>endingYear-4+i).map(taxYear=>{
@@ -140,14 +145,34 @@ function deadlineRiskBuckets(items,asOf=today){
   return groups;
 }
 let selectedRiskGroup=null;
+let focusedObligationKey=null;
 function riskRadar(items){
   const groups=deadlineRiskBuckets(items);
   const cards=[['Overdue','overdue'],['Due today','today'],['Due within 3 days','within3'],['Due within 7 days','within7']];
   const selected=selectedRiskGroup&&groups[selectedRiskGroup]?selectedRiskGroup:cards.find(([,key])=>groups[key].length)?.[1]||'overdue';
   const rows=groups[selected].slice().sort((a,b)=>a.due.localeCompare(b.due)||a.c.name.localeCompare(b.c.name));
   const selectedTitle=cards.find(([,key])=>key===selected)[0];
-  return `<div class="panel risk-radar"><div class="panel-head"><div><h2>Deadline risk radar</h2><p>Unfiled obligations grouped by their due date.</p></div><button class="link" data-go="tracker">Open tracker →</button></div><div class="risk-radar-grid">${cards.map(([title,key])=>`<button type="button" class="risk-radar-card ${key} ${selected===key?'selected':''}" data-risk-group="${key}" aria-pressed="${selected===key}" aria-controls="risk-radar-results"><small>${title}</small><strong>${groups[key].length}</strong></button>`).join('')}</div><div id="risk-radar-results" class="risk-radar-results"><h3>${selectedTitle} <span class="subtle">${rows.length} unfiled ${rows.length===1?'obligation':'obligations'}</span></h3><div class="table-scroll"><table><thead><tr><th>Client</th><th>BIR form</th><th>Period</th><th>Due date</th></tr></thead><tbody>${rows.map(o=>`<tr><td>${clientCell(o.c)}</td><td>${esc(o.f.id)}</td><td>${esc(o.p)} ${year}</td><td>${esc(o.due)}</td></tr>`).join('')||'<tr><td colspan="4" class="empty">No unfiled obligations in this group.</td></tr>'}</tbody></table></div></div></div>`;
+  return `<div class="panel risk-radar"><div class="panel-head"><div><h2>Deadline risk radar</h2><p>Unfiled obligations grouped by their due date.</p></div><button class="link" data-go="tracker">Open tracker →</button></div><div class="risk-radar-grid">${cards.map(([title,key])=>`<button type="button" class="risk-radar-card ${key} ${selected===key?'selected':''}" data-risk-group="${key}" aria-pressed="${selected===key}" aria-controls="risk-radar-results"><small>${title}</small><strong>${groups[key].length}</strong></button>`).join('')}</div><div id="risk-radar-results" class="risk-radar-results"><h3>${selectedTitle} <span class="subtle">${rows.length} unfiled ${rows.length===1?'obligation':'obligations'}</span></h3><div class="table-scroll"><table><thead><tr><th>Client</th><th>BIR form</th><th>Period</th><th>Due date</th></tr></thead><tbody>${rows.map(o=>`<tr class="risk-radar-row" data-risk-filing="${esc(o.key)}" role="button" tabindex="0" aria-label="Open filing for ${esc(o.c.name)}, ${esc(o.f.id)} ${esc(o.p)}"><td>${clientCell(o.c)}</td><td>${esc(o.f.id)}</td><td>${esc(o.p)} ${year}</td><td>${esc(o.due)}</td></tr>`).join('')||'<tr><td colspan="4" class="empty">No unfiled obligations in this group.</td></tr>'}</tbody></table></div></div></div>`;
 }
+function openRiskFiling(key){
+  if(!obligations().some(o=>o.key===key&&!o.filing))return;
+  go('tracker');
+  focusedObligationKey=key;
+  render();
+  fileModal(key);
+}
+document.addEventListener('click',event=>{
+  const row=event.target.closest('.risk-radar-row[data-risk-filing]');
+  if(row)openRiskFiling(row.dataset.riskFiling);
+});
+document.addEventListener('keydown',event=>{
+  const row=event.target.closest('.risk-radar-row[data-risk-filing]');
+  if(row&&(event.key==='Enter'||event.key===' ')){event.preventDefault();openRiskFiling(row.dataset.riskFiling);}
+});
+document.addEventListener('click',event=>{
+  if(!event.target.closest('#clear-focused-obligation'))return;
+  focusedObligationKey=null;render();
+});
 document.addEventListener('click',event=>{
   const card=event.target.closest('[data-risk-group]');
   if(!card)return;
@@ -207,10 +232,10 @@ document.addEventListener('click',event=>{
 function render(){ensureAutomaticYear();document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('selected',b.dataset.page===page));document.querySelector('#crumb').textContent={dashboard:'Overview',clients:'Client directory',pullout:'PULLOUT',tracker:'Compliance tracker',deadlines:'Deadline reference',settings:'Settings'}[page];document.querySelector('#content').innerHTML=({dashboard:dashboard,clients:clients,pullout:pulloutPage,tracker:tracker,deadlines:deadlines,settings:settings}[page])();document.querySelector('#year')?.addEventListener('change',e=>{const next=Number(e.target.value);if(!e.target.validity.valid||!Number.isInteger(next)){e.target.value=year;return;}year=next;trackerPage=1;render()});bind()}
 function dashboard(){const obs=obligations(),done=obs.filter(o=>o.filing).length,over=obs.filter(o=>!o.filing&&o.due<today).length,active=state.clients.filter(c=>c.start<=`${year}-12-31`),complete=active.filter(c=>status(c,obs)==='Complete').length,pct=Math.round(done/Math.max(obs.length,1)*100);let recent=obs.filter(o=>o.filing).sort((a,b)=>b.filing.date.localeCompare(a.filing.date)).slice(0,5);return heading('A clear view of your compliance.',`Track obligations, keep deadlines in sight, and move every client forward.`,`<button class="btn primary" data-go="tracker">↗ Open tracker</button>`)+`<div class="stats">${[[active.length,'Clients in this year','♙','Across your client portfolio'],[done,'Filings completed','✓',`${pct}% of ${obs.length} obligations`],[obs.length-done,'Awaiting filing','◷','Applicable obligations remaining'],[over,'Overdue obligations','!',`As of ${new Date(today+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`]].map((s,i)=>`<div class="stat"><div class="stat-top">${s[1]}<span class="stat-icon">${s[2]}</span></div><strong>${s[0]}</strong><small class="${i===1?'green':''}">${s[3]}</small></div>`).join('')}</div><div class="grid"><div class="panel"><div class="panel-head"><div><h2>Filing progress by form</h2><p>Completed obligations for ${year}</p></div><span class="subtle">${year} TAX YEAR</span></div><div class="panel-body">${forms.slice(0,4).map(f=>{let a=obs.filter(o=>o.f.id===f.id),n=a.filter(o=>o.filing).length;return `<div class="progress-row"><div class="progress-label"><span>${f.id}<small>${f.name.split(' · ')[0]}</small></span><span>${n} <span class="subtle">/ ${a.length}</span></span></div><div class="track"><div class="fill" style="width:${100*n/Math.max(a.length,1)}%"></div></div></div>`}).join('')}</div></div><div class="panel"><div class="panel-head"><div><h2>Portfolio completion</h2><p>Every applicable period counts</p></div></div><div class="panel-body"><div class="donut-wrap"><div class="donut" style="background:conic-gradient(#4b84e5 ${pct}%,#edf1f6 0)"><div class="donut-inner"><strong>${pct}%</strong><small>FILINGS COMPLETE</small></div></div><div class="legend"><div><i style="background:#4b84e5"></i>Filed<b>${done}</b></div><div><i style="background:#e0e6ef"></i>Remaining<b>${obs.length-done}</b></div></div></div><div class="banner">${['Complete','Pending','Incomplete','N/A'].map(label=>`${badge(label)} ${active.filter(c=>status(c,obs)===label).length}`).join(' · ')}<br>${complete} of ${active.length} clients have completed every obligation for ${year}.</div></div></div></div>${clientTrendChart()}${riskRadar(obs)}<div class="panel"><div class="panel-head"><div><h2>Recent filings</h2><p>The latest recorded submissions in your workspace</p></div><button class="link" data-go="tracker">View all filings →</button></div><div class="table-scroll"><table><thead><tr><th>Client</th><th>BIR form</th><th>Period</th><th>Filed on</th><th>Status</th></tr></thead><tbody>${recent.map(o=>`<tr class="recent-client-row" data-client="${o.c.id}"><td>${clientCell(o.c)}</td><td>${o.f.id}</td><td>${o.p} ${year}</td><td>${o.filing.date}</td><td>${badge('Complete')}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">No filings recorded for this year.</td></tr>'}</tbody></table></div></div>`}
 function clients(){let rows=filteredClientRows(state.clients.filter(c=>c.status!=='Pulled out').map(c=>clientForYear(c)),query,clientTaxFilter,clientBusinessFilter,clientSort);return heading('Client directory','One master record for every client and their filing requirements.','<div class="directory-actions"><button class="btn" data-go="pullout">View PULLOUT</button><button class="btn primary" id="add-client">＋ Add client</button></div>')+`<div class="panel"><div class="toolbar"><div class="search-wrap"><input id="search" placeholder="Search clients or TIN…" aria-label="Search clients" value="${esc(query)}"><button type="button" class="search-clear" id="clear-search">×</button></div><select id="client-tax-filter" aria-label="Filter by tax type"><option value="all">All tax types</option>${['VAT','NVAT'].map(v=>`<option value="${v}" ${clientTaxFilter===v?'selected':''}>${v}</option>`).join('')}</select><select id="client-business-filter" aria-label="Filter by business type"><option value="all">All business types</option>${['Sole proprietorship','Partnership','Corporation'].map(v=>`<option value="${v}" ${clientBusinessFilter===v?'selected':''}>${v}</option>`).join('')}</select><select id="client-sort" aria-label="Sort clients alphabetically"><option value="az" ${clientSort==='az'?'selected':''}>Name A–Z</option><option value="za" ${clientSort==='za'?'selected':''}>Name Z–A</option></select><span class="subtle">${rows.length} CLIENTS</span></div><div class="table-scroll"><table><thead><tr><th>Client / business type</th><th>TIN</th><th>Tax type</th><th>Status</th><th>Start of filing</th><th>Required forms (${year})</th>${customClientFields.map(field=>`<th>${esc(field)}</th>`).join('')}</tr></thead><tbody>${rows.map(c=>`<tr class="client-row" data-client="${c.id}"><td>${clientCell(c)}</td><td>${esc(c.tin)}</td><td>${esc(c.tax)}</td><td>${badge(c.status)}</td><td>${esc(c.start)}</td><td>${c.forms.map(esc).join(', ')}${c.inheritedFrom?`<small style="display:block">Carried from ${c.inheritedFrom}</small>`:''}${c.reviewReason?`<small style="display:block;color:#956000">Review required: ${esc(c.reviewReason)}</small>`:''}</td>${customClientFields.map(field=>`<td>${esc(c.customFields?.[field]||'—')}</td>`).join('')}</tr>`).join('')||'<tr><td colspan="${6+customClientFields.length}" class="empty">No matching clients.</td></tr>'}</tbody></table></div><div class="summary-line">Sample identities and placeholder TINs · Client requirements generate period-specific obligations.</div></div>`}
-function tracker(){let obs=obligations().filter(o=>(o.c.name+' '+o.f.id).toLowerCase().includes(query.toLowerCase())&&(filter==='filed'?!!o.filing:filter==='overdue'?!o.filing&&o.due<today:!o.filing)&&(periodFilter==='all'||o.p===periodFilter)).sort((a,b)=>a.due.localeCompare(b.due)||a.c.name.localeCompare(b.c.name)||a.f.id.localeCompare(b.f.id));const totalPages=Math.max(1,Math.ceil(obs.length/pageSize));trackerPage=Math.min(trackerPage,totalPages);const start=(trackerPage-1)*pageSize;const visible=obs.slice(start,start+pageSize);return heading('Compliance tracker','Track each client, form, and filing period. Record a submission to update progress.')+`<div class="panel"><div class="toolbar"><div class="search-wrap"><input id="search" placeholder="Search client or form…" aria-label="Search obligations" value="${esc(query)}"><button type="button" class="search-clear" id="clear-search">×</button></div><select id="filter" aria-label="Filing status">${[['unfiled','For filing'],['filed','Filed'],['overdue','Overdue']].map(([v,t])=>`<option value="${v}" ${v===filter?'selected':''}>${t}</option>`).join('')}</select><select id="period-filter" aria-label="Covered period">${['all','Q1','Q2','Q3','Q4','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Annual'].map(p=>`<option value="${p}" ${p===periodFilter?'selected':''}>${p==='all'?'All periods':p}</option>`).join('')}</select></div><div class="table-scroll"><table><thead><tr><th>Client</th><th>Form / period</th><th>Due date</th><th>Filing status</th><th>Client annual status</th></tr></thead><tbody>${visible.map(o=>`<tr class="tracker-row" data-file="${o.key}" role="button" tabindex="0"><td>${clientCell(o.c)}</td><td><strong>${o.f.id}</strong><br><span class="period">${esc(filingPeriodLabel(o.f,o.p,year))}</span></td><td style="white-space:nowrap">${o.due}</td><td>${o.filing?badge('Complete')+'<br><span class="period">'+esc(o.filing.date)+'</span>':badge(filingStatus(o))+(o.due<today?'<br><span class="period">Overdue</span>':'')}</td><td>${badge(status(o.c,obligations()))}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">No obligations match these filters.</td></tr>'}</tbody></table></div><div class="pagination"><span>Showing ${obs.length?start+1:0}–${Math.min(start+pageSize,obs.length)} of ${obs.length} records</span><div class="controls"><button class="btn" id="previous-page" ${trackerPage===1?'disabled':''}>Previous</button><span>Page ${trackerPage} of ${totalPages}</span><button class="btn" id="next-page" ${trackerPage===totalPages?'disabled':''}>Next</button></div></div><div class="summary-line">${obs.length} obligations · Non-applicable forms are excluded · Deadline dates are based on the workbook.</div></div>`}
+function tracker(){let obs=obligations().filter(o=>(!focusedObligationKey||o.key===focusedObligationKey)&&(o.c.name+' '+o.f.id).toLowerCase().includes(query.toLowerCase())&&(filter==='filed'?!!o.filing:filter==='overdue'?!o.filing&&o.due<today:!o.filing)&&(periodFilter==='all'||o.p===periodFilter)).sort((a,b)=>a.due.localeCompare(b.due)||a.c.name.localeCompare(b.c.name)||a.f.id.localeCompare(b.f.id));const totalPages=Math.max(1,Math.ceil(obs.length/pageSize));trackerPage=Math.min(trackerPage,totalPages);const start=(trackerPage-1)*pageSize;const visible=obs.slice(start,start+pageSize);return heading('Compliance tracker','Track each client, form, and filing period. Record a submission to update progress.')+(focusedObligationKey?'<div class="focused-obligation-bar">Showing one filing <button type="button" class="link" id="clear-focused-obligation">Show all filings</button></div>':'')+`<div class="panel"><div class="toolbar"><div class="search-wrap"><input id="search" placeholder="Search client or form…" aria-label="Search obligations" value="${esc(query)}"><button type="button" class="search-clear" id="clear-search">×</button></div><select id="filter" aria-label="Filing status">${[['unfiled','For filing'],['filed','Filed'],['overdue','Overdue']].map(([v,t])=>`<option value="${v}" ${v===filter?'selected':''}>${t}</option>`).join('')}</select><select id="period-filter" aria-label="Covered period">${['all','Q1','Q2','Q3','Q4','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Annual'].map(p=>`<option value="${p}" ${p===periodFilter?'selected':''}>${p==='all'?'All periods':p}</option>`).join('')}</select></div><div class="table-scroll"><table><thead><tr><th>Client</th><th>Form / period</th><th>Due date</th><th>Filing status</th><th>Client annual status</th></tr></thead><tbody>${visible.map(o=>`<tr class="tracker-row" data-file="${o.key}" role="button" tabindex="0"><td>${clientCell(o.c)}</td><td><strong>${o.f.id}</strong><br><span class="period">${esc(filingPeriodLabel(o.f,o.p,year))}</span></td><td style="white-space:nowrap">${o.due}</td><td>${o.filing?badge('Complete')+'<br><span class="period">'+esc(o.filing.date)+'</span>':badge(filingStatus(o))+(o.due<today?'<br><span class="period">Overdue</span>':'')}</td><td>${badge(status(o.c,obligations()))}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">No obligations match these filters.</td></tr>'}</tbody></table></div><div class="pagination"><span>Showing ${obs.length?start+1:0}–${Math.min(start+pageSize,obs.length)} of ${obs.length} records</span><div class="controls"><button class="btn" id="previous-page" ${trackerPage===1?'disabled':''}>Previous</button><span>Page ${trackerPage} of ${totalPages}</span><button class="btn" id="next-page" ${trackerPage===totalPages?'disabled':''}>Next</button></div></div><div class="summary-line">${obs.length} obligations · Non-applicable forms are excluded · Deadline dates are based on the workbook.</div></div>`}
 function deadlines(){return heading('Deadline reference','A shared reference for forms, covered periods, and filing schedules.')+`<div class="panel"><div class="panel-head"><div><h2>Filing schedules</h2><p>Supported forms · Calendar-year assumption</p></div></div><div class="table-scroll"><table><thead><tr><th>BIR form</th><th>Description</th><th>Period covered</th><th>Frequency</th><th>Due dates · ${year}</th></tr></thead><tbody>${forms.map(f=>`<tr><td><strong>${f.id}</strong></td><td>${f.name}</td><td>${f.periods.join(', ')}</td><td>${f.frequency||(f.periods[0]==='Annual'?'Annual':f.id==='1601-C'?'Monthly':'Quarterly')}</td><td>${f.periods.map(p=>`${p}: ${due(f,p,year)}`).join('<br>')}</td></tr>`).join('')}</tbody></table></div></div>${calendarRulesPanel()}`}
 function bind(){document.querySelector('#previous-page')?.addEventListener('click',()=>{trackerPage--;render()});document.querySelector('#next-page')?.addEventListener('click',()=>{trackerPage++;render()});document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));document.querySelector('#add-client')?.addEventListener('click',()=>editClient());document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>editClient(+b.dataset.edit));document.querySelectorAll('[data-file]').forEach(b=>b.onclick=()=>fileModal(b.dataset.file));document.querySelectorAll('.tracker-row').forEach(r=>r.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fileModal(r.dataset.file)}});const s=document.querySelector('#search');document.querySelector('#clear-search')?.addEventListener('click',()=>{query='';render()});if(s)s.oninput=e=>{const pos=e.target.selectionStart;query=e.target.value;trackerPage=1;render();const n=document.querySelector('#search');n.focus();n.setSelectionRange(pos,pos)};document.querySelector('#filter')?.addEventListener('change',e=>{filter=e.target.value;trackerPage=1;render()});document.querySelector('#period-filter')?.addEventListener('change',e=>{periodFilter=e.target.value;trackerPage=1;render()});document.querySelector('#client-tax-filter')?.addEventListener('change',e=>{clientTaxFilter=e.target.value;render()});document.querySelector('#client-business-filter')?.addEventListener('change',e=>{clientBusinessFilter=e.target.value;render()});document.querySelector('#client-sort')?.addEventListener('change',e=>{clientSort=e.target.value;render()})}
-function go(p){setAuthState(true);trackerPage=1;page=p;query='';filter='unfiled';periodFilter='all';clientTaxFilter='all';clientBusinessFilter='all';clientSort='az';render()}document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>go(b.dataset.page));
+function go(p){focusedObligationKey=null;setAuthState(true);trackerPage=1;page=p;query='';filter='unfiled';periodFilter='all';clientTaxFilter='all';clientBusinessFilter='all';clientSort='az';render()}document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>go(b.dataset.page));
 function editClient(id){
   const original=state.clients.find(c=>c.id===id);
   const selectedYear=year;
@@ -357,7 +382,7 @@ function editClient(id){
     });render();notify(`Client saved. Requirements updated for ${selectedYear}.`);
   };
 }
-function confirmFiling(k,o,draft,parent,returnClientId){
+function confirmFiling(k,o,draft,parent,returnClientId,attachment){
   if(document.querySelector('#filing-confirmation'))return;
   const confirmation=document.createElement('dialog');
   confirmation.id='filing-confirmation';
@@ -365,7 +390,7 @@ function confirmFiling(k,o,draft,parent,returnClientId){
   confirmation.innerHTML=`<h2 id="filing-confirmation-title">Confirm filing</h2><p>Review the details before saving.</p>
     <dl class="filing-confirmation-details">${[
       ['Client',o.c.name],['Form',o.f.id],['Period',filingPeriodLabel(o.f,o.p,Number(k.split(':')[1]))],
-      ['Filing date',draft.date],['Confirmation / reference',draft.reference],['Remarks',draft.remarks||'—']
+      ['Filing date',draft.date],['Confirmation / reference',draft.reference],['Remarks',draft.remarks||'—'],['Document',attachment?.filename||'None']
     ].map(([label,value])=>`<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('')}</dl>
     <div class="modal-actions"><button type="button" class="btn" id="back-to-filing">Back to edit</button><button type="button" class="btn primary" id="confirm-save-filing">Confirm &amp; Save</button></div>`;
   document.body.append(confirmation);
@@ -383,6 +408,12 @@ function confirmFiling(k,o,draft,parent,returnClientId){
       if(!database){if(previous)state.filings[k]=previous;else delete state.filings[k];}
       e.target.disabled=false;return;
     }
+    let attachmentError=null;
+    if(attachment){
+      try{window.taxguardDB.saveClientDocument({...attachment,clientId:o.c.id,filingKey:k});}
+      catch(error){attachmentError=error;}
+    }
+    if(focusedObligationKey===k)filter='filed';
     confirmation.close();
     closeModal(parent,()=>{
       if(returnClientId){
@@ -391,7 +422,7 @@ function confirmFiling(k,o,draft,parent,returnClientId){
         clientModal(returnClientId,true);
       }
     });
-    render();notify('Filing saved. Progress updated.');
+    render();notify(attachmentError?'Filing saved, but document not saved: '+attachmentError.message:attachment?'Filing and document saved. Progress updated.':'Filing saved. Progress updated.');
   };
   confirmation.showModal();
 }
@@ -430,11 +461,37 @@ function filingAlertHTML(o, fileDateStr, isComplete){
     return `<div class="filing-modal-alert alert-early"><span class="alert-icon">⏳</span><div><strong>Early Filing Reminder</strong><p>${periodNote}It is currently early to file this return—the statutory deadline is still <b>${diffDays} days away</b> on <b>${esc(dueStr)}</b>. Ensure all transactions, withholding, and period ledgers are complete before submitting in advance.</p></div></div>`;
   }
 }
-function fileModal(k,returnClientId){let o=obligations().find(o=>o.key===k),m=workspaceDialog();if(!o)return;const initialDate=o.filing?.date||today;const dueYear=Number(o.due.slice(0,4)),nextYear=dueYear>year;m.innerHTML=`<h2>${o.filing?'Filing details':'Record filing'}</h2><p>${esc(o.c.name)}<br><strong>${o.f.id} · ${esc(filingPeriodLabel(o.f,o.p,year))}</strong> · Due ${o.due}</p>${nextYear?'<div class="filing-modal-alert alert-due-soon"><span class="alert-icon">⚠️</span><div><strong>Next-year due date</strong><p>This obligation belongs to the selected '+year+' filing year, but its due date falls in '+dueYear+'. It is shown for reference only and should be filed from the '+dueYear+' tax year.</p></div></div>':''}<div id="filing-alert-container">${filingAlertHTML(o,initialDate,!!o.filing)}</div><form id="filing-form"><label>Filing date</label><input type="date" name="date" required max="${today}" value="${initialDate}"><label>Confirmation / reference number</label><input name="reference" required value="${esc(o.filing?.reference||'')}" placeholder="Enter submission reference"><label>Remarks</label><input name="remarks" value="${esc(o.filing?.remarks||'')}" placeholder="Optional notes"><div class="modal-actions"><button type="button" class="btn" id="cancel">Cancel</button><button class="btn primary" ${nextYear?'disabled':''}>Save filing</button></div></form>`;m.showModal();const dateInput=m.querySelector('#filing-form input[name="date"]');const alertContainer=m.querySelector('#filing-alert-container');if(dateInput&&alertContainer){dateInput.addEventListener('input',()=>{alertContainer.innerHTML=filingAlertHTML(o,dateInput.value,!!o.filing)})};m.querySelector('#cancel').onclick=()=>closeModal(m);m.querySelector('#filing-form').onsubmit=e=>{e.preventDefault();if(nextYear){notify('Switch to tax year '+dueYear+' before recording this filing.');return;}confirmFiling(k,o,Object.fromEntries(new FormData(e.target)),m,returnClientId)}}
+function fileModal(k,returnClientId){
+  const o=obligations().find(item=>item.key===k);
+  if(!o)return;
+  const m=workspaceDialog(),initialDate=o.filing?.date||today;
+  const dueYear=Number(o.due.slice(0,4)),nextYear=dueYear>year;
+  m.innerHTML=`<h2>${o.filing?'Filing details':'Record filing'}</h2><p>${esc(o.c.name)}<br><strong>${o.f.id} · ${esc(filingPeriodLabel(o.f,o.p,year))}</strong> · Due ${o.due}</p>${nextYear?'<div class="filing-modal-alert alert-due-soon"><span class="alert-icon">⚠️</span><div><strong>Next-year due date</strong><p>This obligation belongs to the selected '+year+' filing year, but its due date falls in '+dueYear+'. It is shown for reference only and should be filed from the '+dueYear+' tax year.</p></div></div>':''}<div id="filing-alert-container">${filingAlertHTML(o,initialDate,!!o.filing)}</div><form id="filing-form"><label>Filing date</label><input type="date" name="date" required max="${today}" value="${initialDate}"><label>Confirmation / reference number</label><input name="reference" required value="${esc(o.filing?.reference||'')}" placeholder="Enter submission reference"><label>Remarks</label><input name="remarks" value="${esc(o.filing?.remarks||'')}" placeholder="Optional notes"><div class="filing-document-section"><label for="filing-document">Document (optional)</label><input id="filing-document" type="file" accept="application/pdf,image/png,image/jpeg,image/webp,.pdf,.png,.jpg,.jpeg,.webp" ${window.taxguardDB?.saveClientDocument?'':'disabled'}><small>Attach a PDF, PNG, JPEG, or WebP copy, up to 5 MB. It saves only when you confirm the filing.</small></div><div class="modal-actions"><button type="button" class="btn" id="cancel">Cancel</button><button class="btn primary" ${nextYear?'disabled':''}>Save filing</button></div></form>`;
+  m.showModal();
+  const dateInput=m.querySelector('#filing-form input[name="date"]'),alertContainer=m.querySelector('#filing-alert-container');
+  dateInput?.addEventListener('input',()=>{alertContainer.innerHTML=filingAlertHTML(o,dateInput.value,!!o.filing);});
+  m.querySelector('#cancel').onclick=()=>closeModal(m);
+  m.querySelector('#filing-form').onsubmit=async e=>{
+    e.preventDefault();
+    if(nextYear){notify('Switch to tax year '+dueYear+' before recording this filing.');return;}
+    const form=e.target,file=form.querySelector('#filing-document').files[0];
+    let attachment=null;
+    if(file){
+      if(file.size>5*1024*1024){notify('Document must be 5 MB or less.');return;}
+      if(!['application/pdf','image/png','image/jpeg','image/webp'].includes(file.type)){notify('Choose a PDF, PNG, JPEG, or WebP document.');return;}
+      try{
+        const base64=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(Error('Could not read document.'));reader.readAsDataURL(file);});
+        attachment={filename:file.name,mime:file.type,base64};
+      }catch(error){notify(error.message);return;}
+    }
+    const data=new FormData(form);
+    confirmFiling(k,o,{date:String(data.get('date')),reference:String(data.get('reference')),remarks:String(data.get('remarks'))},m,returnClientId,attachment);
+  };
+}
 render();
 
 const basicDeadlineModal=deadlineModal;
-deadlineModal=function(id){const f=forms.find(x=>x.id===id),m=document.querySelector('#modal');if(!f)return; m.innerHTML=`<h2>${esc(f.id)}</h2><p>${esc(f.name)}</p><form id="schedule-form"><div class="schedule-edit-list">${f.periods.map((p,i)=>`<div class="schedule-edit-row"><input name="period" value="${esc(p)}" aria-label="Period"><input type="date" name="date" value="${esc(f.dates[i]||due(f,p,year))}" aria-label="Due date"></div>`).join('')}</div><div class="modal-actions"><button type="button" class="btn" id="cancel">Cancel</button><button class="btn primary">Save schedule</button></div></form>`;m.showModal();m.querySelector('#cancel').onclick=()=>closeModal(m);m.querySelector('#schedule-form').onsubmit=e=>{e.preventDefault();const fd=new FormData(e.target),periods=fd.getAll('period'),dates=fd.getAll('date');f.periods=periods;f.dates=dates;saveForms();closeModal(m);render();notify('Schedule updated.')}};
+deadlineModal=function(id){const f=forms.find(x=>x.id===id),m=document.querySelector('#modal');if(!f)return; m.innerHTML=`<h2>${esc(f.id)}</h2><p>${esc(f.name)}</p><form id="schedule-form"><div class="schedule-edit-list">${f.periods.map((p,i)=>`<div class="schedule-edit-row"><span class="schedule-period">${esc(p)}</span><input type="hidden" name="period" value="${esc(p)}"><input type="date" name="date" value="${esc(f.dates[i]||due(f,p,year))}" aria-label="Due date"></div>`).join('')}</div><div class="modal-actions"><button type="button" class="btn" id="cancel">Cancel</button><button class="btn primary">Save schedule</button></div></form>`;m.showModal();m.querySelector('#cancel').onclick=()=>closeModal(m);m.querySelector('#schedule-form').onsubmit=e=>{e.preventDefault();const fd=new FormData(e.target),periods=fd.getAll('period'),dates=fd.getAll('date');f.periods=periods;f.dates=dates;saveForms();closeModal(m);render();notify('Schedule updated.')}};
 deadlineModal=function(id,reuse=false){
   const f=forms.find(x=>x.id===id);if(!f)return;
   const m=workspaceDialog(reuse);
@@ -443,7 +500,7 @@ deadlineModal=function(id,reuse=false){
   m.querySelector('#cancel').onclick=()=>closeModal(m);
   m.querySelector('#edit-schedule').onclick=()=>{
     const editor=workspaceDialog();
-    editor.innerHTML=`<h2>Edit ${esc(f.id)} schedule</h2><form id="schedule-form"><div class="schedule-edit-list">${f.periods.map(p=>`<div class="schedule-edit-row"><input name="period" value="${esc(p)}"><input type="date" name="date" value="${esc(due(f,p,year))}"></div>`).join('')}</div><div class="modal-actions"><button type="button" class="btn" id="cancel-edit">Cancel</button><button class="btn primary">Save schedule</button></div></form>`;
+    editor.innerHTML=`<h2>Edit ${esc(f.id)} schedule</h2><form id="schedule-form"><div class="schedule-edit-list">${f.periods.map(p=>`<div class="schedule-edit-row"><span class="schedule-period">${esc(p)}</span><input type="hidden" name="period" value="${esc(p)}"><input type="date" name="date" value="${esc(due(f,p,year))}"></div>`).join('')}</div><div class="modal-actions"><button type="button" class="btn" id="cancel-edit">Cancel</button><button class="btn primary">Save schedule</button></div></form>`;
     editor.querySelector('#cancel-edit').onclick=()=>dismissWorkspaceDialog(editor);
     editor.querySelector('#schedule-form').onsubmit=e=>{
       e.preventDefault();
@@ -461,7 +518,22 @@ deadlineModal=function(id,reuse=false){
 const originalDeadlineCards=deadlines;
 deadlines=function(){return heading('Deadline reference','A shared reference for forms, covered periods, and filing schedules.','<button class="btn primary" id="add-deadline">＋ Add deadline</button>')+`<div class="deadline-grid">${forms.map(f=>`<button class="deadline-card" data-deadline="${f.id}"><div class="card-code">${f.id}</div><h2>${esc(f.name)}</h2><div class="card-meta"><span>${f.frequency||(f.periods[0]==='Annual'?'Annual':f.id==='1601-C'?'Monthly':'Quarterly')}</span><span>${f.periods.length} periods</span></div><div class="card-periods">${f.periods.slice(0,5).join(' · ')}${f.periods.length>5?' · …':''}</div><span class="card-link">View schedule →</span><span class="card-edit" data-edit-deadline="${f.id}">Edit</span></button>`).join('')}</div>`};
 const priorBind=bind;bind=function(){priorBind();document.querySelector('#add-deadline')?.addEventListener('click',()=>deadlineEditModal());document.querySelectorAll('[data-edit-deadline]').forEach(b=>b.onclick=e=>{e.stopPropagation();deadlineEditModal(b.dataset.editDeadline)})};
-function deadlineEditModal(id){const f=forms.find(x=>x.id===id)||{id:'',name:'',periods:['Q1'],dates:['04-30']},m=document.querySelector('#modal');m.innerHTML=`<h2>${id?'Edit deadline':'Add deadline'}</h2><form id="deadline-form"><label>Form code</label><input name="id" required value="${esc(f.id)}" ${id?'readonly':''}><label>Description</label><input name="name" required value="${esc(f.name)}"><label>Covered periods (comma separated)</label><input name="periods" required value="${esc(f.periods.join(', '))}"><label>Due dates (comma separated)</label><input name="dates" required value="${esc(f.dates.join(', '))}"><div class="modal-actions"><button type="button" class="btn" id="cancel">Cancel</button><button class="btn primary">Save deadline</button></div></form>`;m.showModal();m.querySelector('#cancel').onclick=()=>closeModal(m);m.querySelector('#deadline-form').onsubmit=e=>{e.preventDefault();const d=new FormData(e.target),v={id:String(d.get('id')).trim(),name:String(d.get('name')).trim(),periods:String(d.get('periods')).split(',').map(x=>x.trim()),dates:String(d.get('dates')).split(',').map(x=>x.trim())},i=forms.findIndex(x=>x.id===id);if(i<0)forms.push(v);else forms[i]=v;saveForms();closeModal(m);render();notify('Deadline saved.')}}
+function deadlineEditModal(id){
+  const f=forms.find(x=>x.id===id)||{id:'',name:'',periods:['Q1'],dates:['04-30']},m=document.querySelector('#modal');
+  const standard=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Q1','Q2','Q3','Q4','Annual'];
+  const choices=[...new Set([...f.periods,...standard])];
+  m.innerHTML=`<h2>${id?'Edit deadline':'Add deadline'}</h2><form id="deadline-form"><label>Form code</label><input name="id" required value="${esc(f.id)}" ${id?'readonly':''}><label>Description</label><input name="name" required value="${esc(f.name)}"><label>Covered periods</label><div class="period-term-choices">${choices.map(term=>`<label><input type="checkbox" name="periods" value="${esc(term)}" ${f.periods.includes(term)?'checked':''}>${esc(term)}</label>`).join('')}</div><label>Due dates (comma separated, in selected period order)</label><input name="dates" required value="${esc(f.dates.join(', '))}"><div class="modal-actions"><button type="button" class="btn" id="cancel">Cancel</button><button class="btn primary">Save deadline</button></div></form>`;
+  m.showModal();m.querySelector('#cancel').onclick=()=>closeModal(m);
+  m.querySelector('#deadline-form').onsubmit=e=>{
+    e.preventDefault();
+    const d=new FormData(e.target),periods=d.getAll('periods'),dates=String(d.get('dates')).split(',').map(value=>value.trim());
+    if(!periods.length||periods.length!==dates.length){notify('Select periods and provide one due date for each.');return;}
+    const v={id:String(d.get('id')).trim(),name:String(d.get('name')).trim(),periods,dates},i=forms.findIndex(x=>x.id===id);
+    if(i<0)forms.push(v);else forms[i]=v;
+    try{saveForms();}catch{return;}
+    closeModal(m);render();notify('Deadline saved.');
+  };
+}
 render();
 
 // Card-based deadline reference with detail modal.
@@ -485,20 +557,44 @@ function clientTrendChart(){
 function openPulloutDialog(id,parent){
   const client=state.clients.find(c=>c.id===id);
   if(!client||client.status==='Pulled out')return;
+  const earliest=client.serviceHistory?.at(-1)?.restart||client.start;
   const dialog=document.createElement('dialog');
   dialog.className='pullout-dialog';
-  dialog.innerHTML=`<h2>Pull out ${esc(client.name)}?</h2><p>Set the last day of service. Earlier filings remain available, and obligations for periods ending after this date stop appearing.</p><form id="pullout-form"><label for="pullout-date">Last day of service</label><input id="pullout-date" name="date" type="date" min="${esc(client.start)}" max="${today}" value="${today}" required><div class="modal-actions"><button type="button" class="btn" id="cancel-pullout">Cancel</button><button class="btn primary">Confirm pullout</button></div></form>`;
+  dialog.innerHTML=`<h2>Pull out ${esc(client.name)}?</h2><p>Set the last day of service. Earlier filings remain available, and obligations for periods ending after this date stop appearing.</p><form id="pullout-form"><label for="pullout-date">Last day of service</label><input id="pullout-date" name="date" type="date" min="${esc(earliest)}" max="${today}" value="${today}" required><div class="modal-actions"><button type="button" class="btn" id="cancel-pullout">Cancel</button><button class="btn primary">Confirm pullout</button></div></form>`;
   document.body.append(dialog);
   const dismiss=()=>{dialog.close();dialog.remove();};
   dialog.querySelector('#cancel-pullout').onclick=dismiss;
   dialog.querySelector('#pullout-form').onsubmit=e=>{
     e.preventDefault();
     const date=e.target.elements.date.value;
-    if(date<client.start||date>today){notify('Choose a valid last day of service.');return;}
+    if(date<earliest||date>today){notify('Choose a valid last day of service.');return;}
     const previous=state.clients.slice(),index=state.clients.findIndex(c=>c.id===id);
-    state.clients[index]={...client,status:'Pulled out',pulledOutAt:date};
+    state.clients[index]={...client,status:'Pulled out',pulledOutAt:date,serviceHistory:[...(client.serviceHistory||[]),{end:date,restart:null}]};
     try{save();}catch{if(!database)state.clients=previous;return;}
     dismiss();if(parent?.open)closeModal(parent);render();notify('Client moved to PULLOUT. Historical records are retained.');
+  };
+  dialog.showModal();
+}
+function openPullinDialog(id,parent){
+  const client=state.clients.find(c=>c.id===id);
+  if(!client||client.status!=='Pulled out')return;
+  const earliest=client.pulledOutAt;
+  const dialog=document.createElement('dialog');
+  dialog.className='pullin-dialog';
+  dialog.innerHTML=`<h2>Pull in ${esc(client.name)}?</h2><p>Choose the first day of resumed service. You can use the pullout date to correct a same-day pullout; any earlier service gap stays in history.</p><form id="pullin-form"><label for="pullin-date">First day of resumed service</label><input id="pullin-date" name="date" type="date" min="${earliest}" max="${today}" value="${today}" required><div class="modal-actions"><button type="button" class="btn" id="cancel-pullin">Cancel</button><button class="btn primary">Confirm pull in</button></div></form>`;
+  document.body.append(dialog);
+  const dismiss=()=>{dialog.close();dialog.remove();};
+  dialog.querySelector('#cancel-pullin').onclick=dismiss;
+  dialog.querySelector('#pullin-form').onsubmit=e=>{
+    e.preventDefault();
+    const date=e.target.elements.date.value;
+    if(date<earliest||date>today){notify('Choose a valid restart date.');return;}
+    const history=(client.serviceHistory?.length?client.serviceHistory:[{end:client.pulledOutAt,restart:null}]).map(interval=>({...interval}));
+    history.at(-1).restart=date;
+    const previous=state.clients.slice(),index=state.clients.findIndex(c=>c.id===id);
+    state.clients[index]={...client,status:'Active',pulledOutAt:undefined,serviceHistory:history};
+    try{save();}catch{if(!database)state.clients=previous;return;}
+    dismiss();if(parent?.open)closeModal(parent);render();notify('Client returned to active service. The earlier pullout remains in history.');
   };
   dialog.showModal();
 }
@@ -514,7 +610,7 @@ function clientModal(id,reuse=false){
   const overdue=clientObs.filter(o=>!o.filing&&o.due<today).length;
   const pending=total-filed-overdue;
   const pct=total?Math.round((filed/total)*100):0;
-  const annualStatus=status(c,allObs);
+  const pulledOut=c.status==='Pulled out',annualStatus=pulledOut?'Pulled out':status(c,allObs);
   const reviewNotice=c.reviewReason?`<div class="banner"><strong>Year review required</strong><p>${esc(c.reviewReason)} Use Edit client to complete this year's requirements. Progress below covers only the currently assigned forms.</p></div>`:'';
 
   const clientForms=forms.filter(f=>c.forms.includes(f.id));
@@ -526,7 +622,7 @@ function clientModal(id,reuse=false){
       filed:fObs.filter(o=>o.filing).length,
       total:fObs.length
     };
-  });
+  }).filter(row=>!pulledOut||row.total>0);
 
   m.innerHTML=`<div class="client-modal-wrap">
     <div class="client-modal-header">
@@ -547,16 +643,16 @@ function clientModal(id,reuse=false){
       <div class="client-progress-header">
         <div>
           <strong>${year} Compliance Progress</strong>
-          <small class="subtle">${filed} of ${total} obligations filed</small>
+          <small class="subtle">${filed} of ${total} ${pulledOut?'applicable obligations filed through pullout':'obligations filed'}</small>
         </div>
-        <span class="client-progress-pct">${pct}%</span>
+        <span class="client-progress-pct ${pulledOut?'pulled-out-label':''}">${pulledOut?'Pulled out':pct+'%'}</span>
       </div>
       <div class="track" style="margin:8px 0 12px;height:7px;">
         <div class="fill" style="width:${pct}%;background:${pct===100?'#16866b':'#2766db'};"></div>
       </div>
       <div class="client-progress-stats">
         <span class="progress-pill filed">✓ ${filed} Filed</span>
-        <span class="progress-pill pending">◷ ${pending} Pending</span>
+        ${pending>0?`<span class="progress-pill pending">◷ ${pending} Pending</span>`:''}
         ${overdue>0?`<span class="progress-pill overdue">! ${overdue} Overdue</span>`:''}
       </div>
       ${total>0?`<div class="client-obligations-list">
@@ -586,7 +682,7 @@ function clientModal(id,reuse=false){
       <button class="btn" id="close-client">Close</button>
       <button class="btn" id="client-year-history">Year history</button>
       <button class="btn" id="client-documents">Documents</button>
-      ${c.status==='Pulled out'?`<span class="subtle">Pulled out ${esc(c.pulledOutAt||'')}</span>`:`<button class="btn" id="pullout-client">Pull out</button>
+      ${pulledOut?`<span class="subtle">Pulled out ${esc(c.pulledOutAt||'')}</span><button class="btn primary" id="pullin-client">Pull in</button>`:`<button class="btn" id="pullout-client">Pull out</button>
       <button class="btn primary" id="record-client-filing" ${clientObs.some(o=>!o.filing)?'':'disabled'}>Record filing</button>
       <button class="btn primary" id="edit-client-detail">Edit client</button>`}
     </div>
@@ -595,6 +691,7 @@ function clientModal(id,reuse=false){
   m.querySelector('#close-client').onclick=()=>closeModal(m);
   m.querySelector('#client-documents').onclick=()=>openClientDocuments(id,m);
   m.querySelector('#pullout-client')?.addEventListener('click',()=>openPulloutDialog(id,m));
+  m.querySelector('#pullin-client')?.addEventListener('click',()=>openPullinDialog(id,m));
   m.querySelector('#client-year-history').onclick=()=>{
     if(document.querySelector('#year-history-dialog'))return;
     const history=document.createElement('dialog');

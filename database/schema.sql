@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS clients (
   tax_type TEXT NOT NULL CHECK (tax_type IN ('VAT','NVAT')),
   status TEXT NOT NULL DEFAULT 'Active',
   pulled_out_at TEXT,
+  service_history_json TEXT NOT NULL DEFAULT '[]',
   custom_fields_json TEXT NOT NULL DEFAULT '{}',
   start_of_filing TEXT NOT NULL,
   remarks TEXT DEFAULT '',
