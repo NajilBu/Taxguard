@@ -164,6 +164,15 @@ function scopedReportClients(scope){
   const ids=new Set(scope.clientIds);
   return state.clients.filter(c=>ids.has(c.id)&&String(c.start||'')<=`${scope.to}-12-31`).map(c=>clientForYear(c,scope.to));
 }
+function scopedReportClientYears(scope){
+  const ids=new Set(scope.clientIds),rows=[];
+  for(const client of state.clients){
+    if(!ids.has(client.id))continue;
+    const first=Math.max(scope.from,Number(String(client.start||'').slice(0,4))||scope.from);
+    for(let taxYear=first;taxYear<=scope.to;taxYear++)rows.push({taxYear,client:clientForYear(client,taxYear)});
+  }
+  return rows;
+}
 function scopedReportObligations(scope){
   const ids=new Set(scope.clientIds),records=[];
   for(let y=scope.from;y<=scope.to;y++)records.push(...obligationsForYear(y).filter(o=>ids.has(o.c.id)));
@@ -210,8 +219,8 @@ function getFilingsReportData(reportYear){
 
 function getClientsReportData(reportScope){
   const scope=normalizedReportScope(reportScope);
-  const headers=['Client ID','Client Name','TIN','Business Type','Tax Type','Status','Start of Filing','Required BIR Forms','Remarks'];
-  const rows=scopedReportClients(scope).map(c=>[
+  const headers=['Client ID','Client Name','TIN','Business Type','Tax Type','Status','Start of Filing','Required BIR Forms','Remarks','Tax Year'];
+  const rows=scopedReportClientYears(scope).map(({client:c,taxYear})=>[
     c.id,
     c.name,
     c.tin,
@@ -220,7 +229,8 @@ function getClientsReportData(reportScope){
     c.status,
     c.start,
     c.forms.join('; '),
-    c.remarks||''
+    c.remarks||'',
+    taxYear
   ]);
   return { title:`TaxGuard-Client-Master-${scope.from}-${scope.to}.xls`, headers, rows };
 }
@@ -293,6 +303,7 @@ function renderSvgFormBars(obsOrItems){
 function openReportSetup(reportType){
   const titles={summary:'Annual Compliance Summary',filings:'Filing Audit Log',clients:'Client Master Roster'};
   const dialog=workspaceDialog(),ordered=[...state.clients].sort((a,b)=>a.name.localeCompare(b.name));
+  dialog.classList.remove('report-modal','data-export-modal');
   dialog.classList.add('report-setup-modal');
   dialog.innerHTML=`<h2>Set up ${esc(titles[reportType]||titles.summary)}</h2><p>Choose the tax years and clients to include. The preview, Excel export, and PDF will use this selection.</p><form id="report-setup-form"><div class="data-transfer-year-range"><label>From year<input id="report-year-from" type="number" min="2000" max="2100" value="${year}" required></label><label>To year<input id="report-year-to" type="number" min="2000" max="2100" value="${year}" required></label></div><div class="data-client-toolbar"><input id="report-client-search" type="search" placeholder="Search client or TIN" aria-label="Search clients"><button type="button" class="btn" id="report-select-all">Select all</button><button type="button" class="btn" id="report-clear-all">Clear all</button></div><p id="report-client-count" class="subtle"></p><div class="data-transfer-client-table"><table><thead><tr><th></th><th>Client</th><th>TIN</th></tr></thead><tbody>${ordered.map(c=>`<tr data-report-client-search="${esc(`${c.name} ${c.tin||''}`.toLowerCase())}"><td><input type="checkbox" name="report-client" value="${c.id}" checked></td><td>${esc(c.name)}</td><td>${esc(c.tin)}</td></tr>`).join('')}</tbody></table></div><p id="report-setup-error" role="alert"></p><div class="modal-actions"><button type="button" class="btn" id="cancel-report-setup">Cancel</button><button type="submit" class="btn primary">Open report preview</button></div></form>`;
   const rows=[...dialog.querySelectorAll('[data-report-client-search]')],count=dialog.querySelector('#report-client-count');
@@ -318,6 +329,7 @@ function openReportPreview(reportType,reportYear){
   const scope=normalizedReportScope(reportYear),y=scope.to,yearLabel=reportYearLabel(scope);
   const m=workspaceDialog();
   if(!m)return;
+  m.classList.remove('report-setup-modal','data-export-modal');
   const obs=scopedReportObligations(scope),clients=scopedReportClients(scope);
   const todayFormatted=new Date().toLocaleDateString('en-PH',{year:'numeric',month:'short',day:'numeric'});
 
@@ -474,7 +486,7 @@ function openReportPreview(reportType,reportYear){
     `;
 
     defaultAnalysis=`Client Master Roster & Form Schedule Assignment Analysis:\n\n`+
-      `• Taxpayer Directory: ${totalClients} registered taxpayer accounts actively monitored across sole proprietorships, corporations, and partnerships.\n`+
+      `• Taxpayer Directory: ${totalClients} selected taxpayer accounts monitored across sole proprietorships, corporations, and partnerships.\n`+
       `• Tax Structure: ${nvatCount} Non-VAT entities and ${vatCount} VAT-registered businesses maintained under automated filing calendars.\n`+
       `• Schedule Assignments: Required BIR forms (2550-Q, 1701-Q, 0605) are configured according to statutory registration certificates.\n`+
       `• Governance: Client profiles, TIN formatting, and commencement dates have been verified for continuous compliance tracking.`;
@@ -488,9 +500,10 @@ function openReportPreview(reportType,reportYear){
         <th>Status</th>
         <th>Start of Filing</th>
         <th>Required BIR Forms</th>
+        <th>Tax Year</th>
       </tr>
     `;
-    tableRowsHtml=clients.map(c=>`
+    tableRowsHtml=scopedReportClientYears(scope).map(({client:c,taxYear})=>`
       <tr>
         <td><strong>${esc(c.name)}</strong></td>
         <td><small class="subtle">${esc(c.tin)}</small></td>
@@ -499,6 +512,7 @@ function openReportPreview(reportType,reportYear){
         <td>${badge(c.status)}</td>
         <td>${esc(c.start)}</td>
         <td><small>${esc(c.forms.join(', '))}</small></td>
+        <td>${taxYear}</td>
       </tr>
     `).join('');
 
@@ -550,7 +564,7 @@ function openReportPreview(reportType,reportYear){
     `;
 
     defaultAnalysis=`Annual Statutory Compliance Analysis for Tax Year ${yearLabel}:\n\n`+
-      `• Overall Standing: Current compliance rate is ${pct}%, with ${done} of ${obs.length} statutory obligations officially completed across all registered taxpayers.\n`+
+      `• Overall Standing: Current compliance rate is ${pct}%, with ${done} of ${obs.length} statutory obligations officially completed across selected taxpayers.\n`+
       `• Pending Pipeline: ${pending} obligations remain in active status for upcoming quarter and monthly BIR filing deadlines.\n`+
       (over>0?`• Risk Alert: ${over} obligations are currently overdue and require urgent submission to prevent BIR surcharges and compromise penalties.\n`:`• Risk Status: Zero overdue obligations detected across all monitored taxpayer accounts.\n`)+
       `• Operational Guidance: Reconcile all withholding certificates and eFPS acknowledgments prior to the subsequent period cut-off.`;

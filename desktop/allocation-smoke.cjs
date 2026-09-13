@@ -232,7 +232,7 @@ module.exports=async function(win,root){
     for(const type of ['summary','filings','clients']){
       document.querySelector(`.report-card[data-report="${type}"]`).click();
       const setup=document.querySelector('#report-setup-form');
-      if(!setup||document.querySelector('.report-modal')?.open)throw Error(`${type} did not open setup first`);
+      if(!setup||document.querySelector('.report-modal')?.open)throw Error(`${type} did not open setup first: ${JSON.stringify({setup:!!setup,previewOpen:!!document.querySelector('.report-modal')?.open,dialogs:[...document.querySelectorAll('dialog')].map(d=>({id:d.id,open:d.open,className:d.className}))})}`);
       setup.querySelector('#report-year-from').value='2025';setup.querySelector('#report-year-to').value='2026';
       setup.querySelectorAll('[name="report-client"]').forEach(input=>input.checked=Number(input.value)===firstClient.id);
       setup.requestSubmit();await new Promise(r=>setTimeout(r,260));
@@ -240,7 +240,8 @@ module.exports=async function(win,root){
       if(!preview?.open||!preview.querySelector('.sheet-meta')?.textContent.includes('Clients included: 1')||!preview.querySelector('.sheet-meta')?.textContent.includes('2025–2026'))throw Error(`${type} preview ignored the report scope`);
       preview.querySelector('#preview-close').click();await new Promise(r=>setTimeout(r,240));
     }
-    if(getSummaryReportData({from:2025,to:2026,clientIds:[firstClient.id]}).rows.length!==1||getClientsReportData({from:2025,to:2026,clientIds:[firstClient.id]}).rows.length!==1||getFilingsReportData({from:2025,to:2026,clientIds:[firstClient.id]}).rows.some(row=>row[1]!==firstClient.tin))throw Error('Report exports ignored the report scope');
+    const reportScope={from:2025,to:2026,clientIds:[firstClient.id]},rosterRows=getClientsReportData(reportScope).rows;
+    if(getSummaryReportData(reportScope).rows.length!==1||!rosterRows.length||rosterRows.some(row=>row[0]!==firstClient.id||row[9]<2025||row[9]>2026)||getFilingsReportData(reportScope).rows.some(row=>row[1]!==firstClient.tin||row[4]<2025||row[4]>2026))throw Error('Report exports ignored the report scope');
     openUserAccountModal();
     const account=document.querySelector('#modal');
     confirmCreateUser({username:'stack-test',company_name:'Test',role:'Staff',is_active:1,password:'test1234'});
