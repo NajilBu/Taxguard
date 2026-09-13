@@ -1391,27 +1391,38 @@ function dataImportSummary(summary,sections){
 function openDataImportDialog(){
   if(!database?.importData){notify('Selective import requires SQLite.');return;}
   const dialog=workspaceDialog();
-  dialog.innerHTML=`<h2>Import data</h2><p>Choose a TaxGuard Excel export, then select the categories to import. Existing records are preserved unless you select form schedules or company profile.</p><input id="data-import-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><div id="data-import-sections"></div><div id="data-import-status" role="status"></div><div class="modal-actions"><button type="button" class="btn" id="cancel-data-import">Cancel</button><button type="button" class="btn primary" id="confirm-data-import" disabled>Import selected data</button></div>`;
+  dialog.classList.add('data-export-modal');
+  dialog.innerHTML=`<h2>Import client data</h2><p>Choose a TaxGuard Excel export, then select the clients and filing years to import. Existing clients and filings are preserved.</p><input id="data-import-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><div id="data-import-sections"></div><div id="data-import-status" role="status"></div><div class="modal-actions"><button type="button" class="btn" id="cancel-data-import">Cancel</button><button type="button" class="btn primary" id="confirm-data-import" disabled>Import selected data</button></div>`;
   dialog.querySelector('#cancel-data-import').onclick=()=>closeModal(dialog);
   const status=dialog.querySelector('#data-import-status'),choices=dialog.querySelector('#data-import-sections'),confirm=dialog.querySelector('#confirm-data-import');
   let selectedFile=null,payload=null;
+  const sections=()=>payload?.sections?.filings?['clients','filings']:['clients'];
   const scopedPayload=()=>{
     if(!payload)return payload;
     const ids=new Set([...dialog.querySelectorAll('input[name="import-client"]:checked')].map(input=>Number(input.value)));
     const from=Number(dialog.querySelector('#import-year-from')?.value),to=Number(dialog.querySelector('#import-year-to')?.value);
-    const clients=(payload.sections.clients||[]).filter(c=>!ids.size||ids.has(Number(c.id)));
-    const allowed=new Set(clients.map(c=>Number(c.id)));
-    const filings=Object.fromEntries(Object.entries(payload.sections.filings||{}).filter(([key])=>{const parts=key.split(':');const year=Number(parts[1]);return allowed.has(Number(parts[0]))&&(!Number.isInteger(from)||year>=from)&&(!Number.isInteger(to)||year<=to);}));
-    return {...payload,sections:{...payload.sections,clients,filings}};
+    const clients=(payload.sections.clients||[]).filter(c=>ids.has(Number(c.id)));
+    const filings=Object.fromEntries(Object.entries(payload.sections.filings||{}).filter(([key])=>{const parts=key.split(':');const year=Number(parts[1]);return ids.has(Number(parts[0]))&&year>=from&&year<=to;}));
+    return {...payload,sections:{clients,...(payload.sections.filings?{filings}:{})},references:{clients:clients.map(c=>({id:c.id,tin:c.tin}))}};
   };
   const preview=()=>{
     confirm.disabled=true;
-    const sections=selectedDataSections(dialog);
-    if(!sections.length){status.textContent='Select at least one data category.';return;}
-      try{const summary=database.previewDataImport(scopedPayload(),sections);status.innerHTML=dataImportSummary(summary,sections);confirm.disabled=false;}
+    if(!dialog.querySelector('input[name="import-client"]:checked')){status.textContent='Select at least one client.';return;}
+    const from=Number(dialog.querySelector('#import-year-from')?.value),to=Number(dialog.querySelector('#import-year-to')?.value);
+    if(!Number.isInteger(from)||!Number.isInteger(to)||from<2000||to>2100||from>to){status.textContent='Choose a valid filing-year range.';return;}
+    try{const summary=database.previewDataImport(scopedPayload(),sections());status.innerHTML=dataImportSummary(summary,sections());confirm.disabled=false;}
     catch(error){status.textContent='Import cannot proceed: '+error.message;}
   };
-  choices.addEventListener('change',preview);
+  choices.addEventListener('change',e=>{
+    if(e.target.id==='select-all-import-clients'){
+      choices.querySelectorAll('tbody tr:not([hidden]) input[name="import-client"]').forEach(input=>input.checked=e.target.checked);
+    }
+    const visible=[...choices.querySelectorAll('tbody tr:not([hidden]) input[name="import-client"]')],selected=visible.filter(input=>input.checked).length,all=choices.querySelector('#select-all-import-clients');
+    if(all){all.checked=visible.length>0&&selected===visible.length;all.indeterminate=selected>0&&selected<visible.length;}
+    const count=choices.querySelector('#import-client-count');
+    if(count)count.textContent=`${choices.querySelectorAll('input[name="import-client"]:checked').length} of ${payload?.sections?.clients?.length||0} clients selected`;
+    preview();
+  });
   dialog.querySelector('#data-import-file').onchange=async e=>{
     confirm.disabled=true;choices.innerHTML='';status.textContent='';selectedFile=e.target.files?.[0];payload=null;
     if(!selectedFile)return;
@@ -1421,20 +1432,22 @@ function openDataImportDialog(){
       if(extension!=='xlsx')throw Error('Choose a TaxGuard .xlsx export.');
       const base64=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(Error('Could not read Excel file.'));reader.readAsDataURL(selectedFile);});
       payload=await database.readDataXlsx(base64);
-      const available=Object.keys(payload.sections||{}).filter(key=>key in dataSectionLabels);
-      if(!available.length)throw Error('This workbook contains no supported data categories.');
+      if(!Array.isArray(payload.sections?.clients))throw Error('This workbook has no client records.');
       const importedClients=payload.sections.clients||[];
-      choices.innerHTML=`<label>Data to import</label>${dataSectionChoices(['clients','filings'],['clients','filings'])}<div class="data-transfer-client-list">${importedClients.map(c=>`<label><input type="checkbox" name="import-client" value="${c.id}" checked><span>${esc(c.name)} <small>${esc(c.tin||'')}</small></span></label>`).join('')}</div><div class="data-transfer-year-range"><label>From year<input type="number" id="import-year-from" min="2000" max="2100" value="2000"></label><label>To year<input type="number" id="import-year-to" min="2000" max="2100" value="2100"></label></div>`;
-      if(!selectedDataSections(dialog).length)choices.querySelector('input[name="data-section"]').checked=true;
+      const years=Object.keys(payload.sections.filings||{}).map(key=>Number(key.split(':')[1])).filter(Number.isInteger),fromYear=years.length?Math.min(...years):new Date().getFullYear(),toYear=years.length?Math.max(...years):new Date().getFullYear();
+      choices.innerHTML=`<div class="data-client-toolbar"><input id="import-client-search" type="search" placeholder="Search by client name or TIN" aria-label="Search clients"></div><p id="import-client-count" class="subtle"></p><div class="data-transfer-client-table"><table><thead><tr><th><input type="checkbox" id="select-all-import-clients" aria-label="Select or clear all visible clients" checked></th><th>Client</th><th>TIN</th><th>Status</th></tr></thead><tbody>${importedClients.map(c=>clientSelectionRow(c,'import-client','data-import-client-search',true)).join('')}</tbody></table></div><div class="data-transfer-year-range"><label>From year<input type="number" id="import-year-from" min="2000" max="2100" value="${fromYear}"></label><label>To year<input type="number" id="import-year-to" min="2000" max="2100" value="${toYear}"></label></div>`;
+      const rows=[...choices.querySelectorAll('[data-import-client-search]')],all=choices.querySelector('#select-all-import-clients'),count=choices.querySelector('#import-client-count');
+      const updateSelection=()=>{const visible=rows.filter(row=>!row.hidden),selected=visible.filter(row=>row.querySelector('input').checked).length;all.checked=visible.length>0&&selected===visible.length;all.indeterminate=selected>0&&selected<visible.length;count.textContent=`${choices.querySelectorAll('input[name="import-client"]:checked').length} of ${importedClients.length} clients selected`;};
+      choices.querySelector('#import-client-search').oninput=e=>{const query=e.target.value.trim().toLowerCase();rows.forEach(row=>row.hidden=!!query&&!row.dataset.importClientSearch.includes(query));updateSelection();};
+      updateSelection();
       preview();
     }catch(error){status.textContent='Could not read file: '+error.message;}
   };
   confirm.onclick=async()=>{
-    const sections=selectedDataSections(dialog);
-    if(!selectedFile||!sections.length)return;
+    if(!selectedFile||confirm.disabled)return;
     confirm.disabled=true;
     try{
-      database.importData(scopedPayload(),sections,databaseRevision);
+      database.importData(scopedPayload(),sections(),databaseRevision);
       restoreDatabase();customClientFields=database.getClientFields();window.refreshCompanyProfile?.();
       closeModal(dialog);render();notify('Selected data imported.');
     }catch(error){status.textContent='Import failed: '+error.message;confirm.disabled=false;}

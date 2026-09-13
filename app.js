@@ -348,7 +348,9 @@ function editClient(id){
   m.querySelector('#suggest-client-forms').onclick=()=>{
     const profile=readProfile();
     const result=TaxGuardAllocation.suggest(profile,selectedYear,forms);
-    review.innerHTML=`<div class="banner"><strong>Suggested additions for ${selectedYear}</strong><ul>${result.suggestions.map(s=>`<li><b>${esc(s.code)}</b> — ${esc(s.reason)}</li>`).join('')}</ul>${result.warnings.map(w=>`<p>${esc(w)}</p>`).join('')}${result.suggestions.length?'<button type="button" class="btn primary" id="apply-client-forms">Apply suggested additions</button>':''}</div>`;
+    const assigned=new Set(selectedInputs().filter(input=>input.checked).map(input=>input.value));
+    const additions=result.suggestions.filter(s=>!assigned.has(s.code)),alreadyAssigned=result.suggestions.filter(s=>assigned.has(s.code));
+    review.innerHTML=`<div class="banner"><strong>Form review for ${selectedYear}</strong><p>${additions.length} suggested addition${additions.length===1?'':'s'} · ${alreadyAssigned.length} already assigned. Suggestions never remove an assigned form.</p>${additions.length?`<p><b>Suggested additions</b></p><ul>${additions.map(s=>`<li><b>${esc(s.code)}</b> — ${esc(s.reason)}</li>`).join('')}</ul>`:''}${alreadyAssigned.length?`<p><b>Already assigned</b>: ${alreadyAssigned.map(s=>esc(s.code)).join(', ')}</p>`:''}${result.warnings.map(w=>`<p>${esc(w)}</p>`).join('')}${additions.length?'<button type="button" class="btn primary" id="apply-client-forms">Add suggested forms</button>':''}</div>`;
     const apply=review.querySelector('#apply-client-forms');
     if(apply)apply.onclick=()=>{
       const codes=new Set(result.suggestions.map(s=>s.code));
@@ -678,7 +680,7 @@ function clientModal(id,reuse=false){
             </div>
           </div>
         `).join('')}
-      </div>`:`<div class="empty" style="padding:15px 0;">No obligations scheduled for ${year}.</div>`}
+      </div>`:`<div class="empty" style="padding:15px 0;">${year<Number(c.start.slice(0,4))?`Service begins in ${esc(c.start)}; earlier years have no filing obligations.`:pulledOut?`No applicable filing periods remain after service ended on ${esc(c.pulledOutAt||'the pullout date')}.`:`No obligations scheduled for ${year}. Review required forms if this is unexpected.`}</div>`}
     </div>
     <div class="modal-actions">
       <button class="btn" id="close-client">Close</button>
@@ -702,7 +704,7 @@ function clientModal(id,reuse=false){
     const startYear=Number(String(original.start||'').slice(0,4));
     const years=[...new Set([year,...Object.keys(original.yearProfiles||{}).map(Number),...Object.keys(state.filings).filter(k=>k.startsWith(id+':')).map(k=>Number(k.split(':')[1]))])].filter(y=>!Number.isInteger(startYear)||!startYear||y>=startYear).sort((a,b)=>b-a);
     const fiveYears=clientFiveYearSummary(id,year);
-    history.innerHTML=`<h2 id="year-history-title">${esc(c.name)} — Year history</h2><p>${fiveYears.length?`Compliance summary from ${fiveYears[0].year} through ${year}. Select a year to view its details.`:`No filing history before ${startYear}.`}</p>
+    history.innerHTML=`<h2 id="year-history-title">${esc(c.name)} — Year history</h2><p>${fiveYears.length?`Compliance summary from ${fiveYears[0].year} through ${year}. Select a year to view its details.`:`No filing history before ${startYear}.`}${startYear>year-4?` Earlier years are omitted because service began in ${esc(original.start)}.`:''}${pulledOut?' Unfiled periods outside the service dates are excluded; earlier filed records remain available.':''}</p>
       <div class="table-scroll"><table><thead><tr><th>Tax year</th><th>Filed</th><th>Obligations</th><th>Status</th></tr></thead><tbody>${fiveYears.map(row=>`<tr><td>${row.year}</td><td>${row.filed}</td><td>${row.total}</td><td>${badge(row.status)}</td></tr>`).join('')}</tbody></table></div><button type="button" class="btn secondary" id="export-five-year" ${fiveYears.length?'':'disabled'}>Export history summary</button>
       <div class="selected-pills">${years.map(y=>`<button type="button" class="btn" data-history-year="${y}">${y}${original.yearProfiles?.[y]?' · Configured':''}</button>`).join('')}</div>
       <div class="modal-actions"><button type="button" class="btn" id="back-history">Back</button></div>`;

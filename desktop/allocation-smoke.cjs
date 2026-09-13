@@ -232,6 +232,14 @@ module.exports=async function(win,root){
     const importFile=document.querySelector('#data-import-file');importFile.files=fileTransfer.files;
     importFile.dispatchEvent(new Event('change',{bubbles:true}));
     for(let attempt=0;attempt<30&&document.querySelector('#confirm-data-import').disabled;attempt++)await new Promise(r=>setTimeout(r,50));
+    if(!document.querySelector('#select-all-import-clients')||!document.querySelector('#import-client-search')||!document.querySelector('#import-year-from')||!document.querySelector('#import-year-to'))throw Error('Client and year import controls missing');
+    document.querySelector('#select-all-import-clients').click();
+    if(!document.querySelector('#confirm-data-import').disabled||document.querySelector('[name="import-client"]:checked'))throw Error('Empty client selection can still import all clients');
+    document.querySelector('[name="import-client"]').click();
+    if(document.querySelector('#confirm-data-import').disabled||!document.querySelector('#data-import-status').textContent.includes('1 already present'))throw Error('Import preview did not use selected client');
+    document.querySelector('#import-year-from').value='2027';document.querySelector('#import-year-to').value='2026';document.querySelector('#import-year-to').dispatchEvent(new Event('change',{bubbles:true}));
+    if(!document.querySelector('#confirm-data-import').disabled)throw Error('Invalid import year range accepted');
+    document.querySelector('#import-year-from').value='2026';document.querySelector('#import-year-to').dispatchEvent(new Event('change',{bubbles:true}));
     if(document.querySelector('#confirm-data-import').disabled||!document.querySelector('#data-import-status').textContent.includes('already present'))throw Error('Import preview missing');
     document.querySelector('#confirm-data-import').click();await new Promise(r=>setTimeout(r,260));
     if(document.querySelector('#modal').open)throw Error('Import dialog did not close');
