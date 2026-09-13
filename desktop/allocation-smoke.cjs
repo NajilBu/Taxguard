@@ -202,7 +202,46 @@ module.exports=async function(win,root){
     deadlineEditModal('1701-Q');
     if(document.querySelector('#deadline-form input[name="periods"]:not([type="checkbox"])')||!document.querySelector('#deadline-form .period-term-choices'))throw Error('Deadline periods are still typeable');
     document.querySelector('#deadline-form #cancel').click();await new Promise(r=>setTimeout(r,240));
-    go('settings');openUserAccountModal();
+    go('settings');
+    if(!document.querySelector('.profile-settings-grid .company-settings-panel')||!document.querySelector('.profile-settings-grid .custom-fields-panel'))throw Error('Profile settings cards are not side by side');
+    document.querySelector('#new-client-field').value='Smoke field';document.querySelector('#add-client-field-form').requestSubmit();
+    if(!document.querySelector('#confirm-client-field-change'))throw Error('Add field confirmation missing');
+    document.querySelector('#confirm-client-field-change').click();await new Promise(r=>setTimeout(r,240));
+    document.querySelector('[data-edit-client-field="Smoke field"]').click();
+    document.querySelector('#rename-client-field-input').value='Smoke renamed';document.querySelector('#rename-client-field-form').requestSubmit();
+    if(!document.querySelector('#confirm-client-field-change'))throw Error('Rename field confirmation missing');
+    document.querySelector('#confirm-client-field-change').click();await new Promise(r=>setTimeout(r,240));
+    if(!document.querySelector('[data-remove-client-field="Smoke renamed"]'))throw Error('Renamed field is not visible');
+    document.querySelector('[data-remove-client-field="Smoke renamed"]').click();
+    if(!document.querySelector('#confirm-client-field-change'))throw Error('Remove field confirmation missing');
+    document.querySelector('#confirm-client-field-change').click();await new Promise(r=>setTimeout(r,240));
+    if(!document.querySelector('#open-data-export')||!document.querySelector('#open-data-import'))throw Error('Selective data transfer controls missing');
+    document.querySelector('#open-data-export').click();
+    if(!document.querySelectorAll('#data-export-form [name="export-client"]').length||!document.querySelector('#export-year-from')||!document.querySelector('#export-year-to'))throw Error('Export client and year choices missing');
+    document.querySelector('#cancel-data-export').click();await new Promise(r=>setTimeout(r,240));
+    document.querySelector('#open-data-import').click();
+    const exported=await window.taxguardDB.exportDataXlsx(['clients']),fileTransfer=new DataTransfer();
+    fileTransfer.items.add(new File([Uint8Array.from(atob(exported),character=>character.charCodeAt(0))],'selected-data.xlsx',{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+    const importFile=document.querySelector('#data-import-file');importFile.files=fileTransfer.files;
+    importFile.dispatchEvent(new Event('change',{bubbles:true}));
+    for(let attempt=0;attempt<30&&document.querySelector('#confirm-data-import').disabled;attempt++)await new Promise(r=>setTimeout(r,50));
+    if(document.querySelector('#confirm-data-import').disabled||!document.querySelector('#data-import-status').textContent.includes('already present'))throw Error('Import preview missing');
+    document.querySelector('#confirm-data-import').click();await new Promise(r=>setTimeout(r,260));
+    if(document.querySelector('#modal').open)throw Error('Import dialog did not close');
+    const firstClient=state.clients[0];
+    for(const type of ['summary','filings','clients']){
+      document.querySelector(`.report-card[data-report="${type}"]`).click();
+      const setup=document.querySelector('#report-setup-form');
+      if(!setup||document.querySelector('.report-modal')?.open)throw Error(`${type} did not open setup first`);
+      setup.querySelector('#report-year-from').value='2025';setup.querySelector('#report-year-to').value='2026';
+      setup.querySelectorAll('[name="report-client"]').forEach(input=>input.checked=Number(input.value)===firstClient.id);
+      setup.requestSubmit();await new Promise(r=>setTimeout(r,260));
+      const preview=document.querySelector('.report-modal');
+      if(!preview?.open||!preview.querySelector('.sheet-meta')?.textContent.includes('Clients included: 1')||!preview.querySelector('.sheet-meta')?.textContent.includes('2025–2026'))throw Error(`${type} preview ignored the report scope`);
+      preview.querySelector('#preview-close').click();await new Promise(r=>setTimeout(r,240));
+    }
+    if(getSummaryReportData({from:2025,to:2026,clientIds:[firstClient.id]}).rows.length!==1||getClientsReportData({from:2025,to:2026,clientIds:[firstClient.id]}).rows.length!==1||getFilingsReportData({from:2025,to:2026,clientIds:[firstClient.id]}).rows.some(row=>row[1]!==firstClient.tin))throw Error('Report exports ignored the report scope');
+    openUserAccountModal();
     const account=document.querySelector('#modal');
     confirmCreateUser({username:'stack-test',company_name:'Test',role:'Staff',is_active:1,password:'test1234'});
     if(!account.open||document.querySelector('#modal').workspaceParent!==account)throw Error('Account confirmation did not stack');
@@ -310,13 +349,18 @@ module.exports=async function(win,root){
   await win.webContents.executeJavaScript('('+function(){
     const id=state.clients[0].id;
     const summary=clientFiveYearSummary(id,2026);
-    if(summary.length!==5||summary[0].year!==2022||summary[4].year!==2026)throw Error('Five-year range incorrect');
+    const startYear=Number(state.clients[0].start.slice(0,4));
+    if(summary.length!==Math.max(0,2026-Math.max(2022,startYear)+1)||summary[0]?.year!==Math.max(2022,startYear)||summary.at(-1)?.year!==2026)throw Error('Year history range incorrect');
     if(summary.some(row=>row.filed>row.total))throw Error('Five-year totals incorrect');
+    const originalStart=state.clients[0].start;
+    state.clients[0].start='2026-01-01';
+    if(clientFiveYearSummary(id,2026).map(row=>row.year).join(',')!=='2026')throw Error('Pre-service years remain in history');
     clientModal(id);
     document.querySelector('#client-year-history').click();
-    if(document.querySelectorAll('#year-history-dialog tbody tr').length!==5||!document.querySelector('#export-five-year'))throw Error('Five-year history missing');
+    if(document.querySelectorAll('#year-history-dialog tbody tr').length!==1||!document.querySelector('#export-five-year')||document.querySelector('[data-history-year="2025"]'))throw Error('Pre-service years remain in history dialog');
     document.querySelector('#back-history').click();
     document.querySelector('#close-client').click();
+    state.clients[0].start=originalStart;
   }.toString()+')()');
   console.log('FIVE-YEAR HISTORY PASS');
   await win.webContents.executeJavaScript('('+async function(){

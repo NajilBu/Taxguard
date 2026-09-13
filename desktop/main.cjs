@@ -5,6 +5,8 @@ const {pathToFileURL}=require('node:url');
 const {Store}=require('./database.cjs');
 const {seedSamples}=require('./seed.cjs');
 const {parseXlsxBuffer}=require('./migration.cjs');
+const dataTransfer=require('./data-transfer.cjs');
+const excelTransfer=require('./excel-transfer.cjs');
 const root=path.join(__dirname,'..');
 const smoke=process.argv.includes('--smoke-test');
 const entry=pathToFileURL(path.join(root,'index.html')).href;
@@ -50,9 +52,13 @@ else app.whenReady().then(async()=>{
       else if(action==='documents:save')value=db.saveClientDocument(data);
       else if(action==='documents:get')value=db.getClientDocument(data?.id);
       else if(action==='documents:delete')value=db.deleteClientDocument(data?.id);
+      else if(action==='data:export')value=dataTransfer.exportData(db,data?.sections);
+      else if(action==='data:preview-import')value=dataTransfer.previewDataImport(db,data?.payload,data?.sections);
+      else if(action==='data:import')value=dataTransfer.importData(db,data?.payload,data?.sections,revision);
       else if(action==='clients:import-csv')value=db.importClientsCsv(data?.text);
       else if(action==='clients:fields:get')value=db.getClientFields();
       else if(action==='clients:fields:save')value=db.saveClientFields(data?.fields);
+      else if(action==='clients:fields:rename')value=db.renameClientField(data?.oldName,data?.newName,revision);
       else if(action==='calendar:list')value=db.getCalendarRules();
       else if(action==='calendar:save')value=db.saveCalendarRule(data);
       else if(action==='calendar:delete')value=db.deleteCalendarRule(data?.id);
@@ -71,6 +77,22 @@ else app.whenReady().then(async()=>{
     const filename=result.filePaths[0];
     if(fs.statSync(filename).size>10*1024*1024)throw Error('Import file exceeds 10 MB.');
     return db.importWorkspace(JSON.parse(fs.readFileSync(filename,'utf8')));
+  });
+  ipcMain.handle('data:export-xlsx',async(e,sections,options)=>{
+    if(!valid(e))throw Error('Untrusted Excel export request.');
+    return excelTransfer.exportWorkbook(db,sections,options);
+  });
+  ipcMain.handle('data:save-xlsx',async(e,sections,options)=>{
+    if(!valid(e))throw Error('Untrusted Excel export request.');
+    const result=await dialog.showSaveDialog(win,{title:'Save TaxGuard Excel export',defaultPath:`TaxGuard-data-${new Date().toISOString().slice(0,10)}.xlsx`,filters:[{name:'Excel workbook',extensions:['xlsx']}]});
+    if(result.canceled||!result.filePath)return {saved:false};
+    const base64=await excelTransfer.exportWorkbook(db,sections,options);
+    fs.writeFileSync(result.filePath,Buffer.from(base64,'base64'));
+    return {saved:true,path:result.filePath};
+  });
+  ipcMain.handle('data:read-xlsx',async(e,base64)=>{
+    if(!valid(e))throw Error('Untrusted Excel import request.');
+    return excelTransfer.readWorkbook(base64);
   });
   ipcMain.handle('clients:import-xlsx',async(e,base64)=>{
     if(!valid(e))throw Error('Untrusted Excel import request.');
@@ -171,6 +193,7 @@ else app.whenReady().then(async()=>{
       go('settings');
       const companyInput=document.querySelector('#company-name-input');
       companyInput.value='Smoke Test Firm';companyInput.dispatchEvent(new Event('input',{bubbles:true}));
+      const descriptionInput=document.querySelector('#company-description-input');descriptionInput.value='Smoke test description';descriptionInput.dispatchEvent(new Event('input',{bubbles:true}));
       const logoInput=document.querySelector('#company-logo-input'),transfer=new DataTransfer();
       window.dispatchEvent(new Event('focus'));
       if(document.querySelector('#company-logo-input')!==logoInput)throw Error('Focus refresh replaced the file input');
@@ -181,7 +204,7 @@ else app.whenReady().then(async()=>{
       if(companyInput.value!=='Smoke Test Firm'||!document.querySelector('#company-logo-preview img'))throw Error('Company profile draft was reset');
       await document.querySelector('#company-logo-preview img').decode();
       document.querySelector('#company-profile-form').requestSubmit();await new Promise(r=>setTimeout(r,100));
-      if(window.taxguardDB.getCompanyProfile().name!=='Smoke Test Firm')throw Error('Company profile did not persist');
+      if(window.taxguardDB.getCompanyProfile().name!=='Smoke Test Firm'||window.taxguardDB.getCompanyProfile().description!=='Smoke test description')throw Error('Company profile did not persist');
       go('clients');editClient();
       const f=document.querySelector('#client-form');
       f.elements.name.value='SQLite integration test';f.elements.tin.value='987-654-321-000';

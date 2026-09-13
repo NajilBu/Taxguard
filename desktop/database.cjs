@@ -190,7 +190,8 @@ class Store {
       ||this.db.prepare('SELECT company_name FROM users ORDER BY id LIMIT 1').get()?.company_name
       ||'EOO Tax & Accounting';
     const logo=this.db.prepare("SELECT value FROM workspace_meta WHERE key='company_logo'").get()?.value||'';
-    return {name,logo};
+    const description=this.db.prepare("SELECT value FROM workspace_meta WHERE key='company_description'").get()?.value||'';
+    return {name,logo,description};
   }
   getClientFields(){
     return JSON.parse(this.db.prepare("SELECT value FROM workspace_meta WHERE key='client_fields'").get()?.value||'[]');
@@ -202,8 +203,31 @@ class Store {
     this.db.prepare("INSERT INTO workspace_meta(key,value) VALUES('client_fields',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(clean));
     return clean;
   }
+  renameClientField(oldName,newName,expectedRevision){
+    const next=String(newName||'').trim();
+    if(!next||next.length>50)throw Error('Field name must be 1 to 50 characters.');
+    this.transaction(()=>{
+      this.checkRevision(expectedRevision);
+      const fields=this.getClientFields();
+      const index=fields.indexOf(oldName);
+      if(index<0)throw Error('Client field no longer exists.');
+      if(fields.some((field,i)=>i!==index&&field.toLowerCase()===next.toLowerCase()))throw Error('Client field names must be unique.');
+      for(const row of this.db.prepare('SELECT id,custom_fields_json FROM clients').all()){
+        const values=JSON.parse(row.custom_fields_json||'{}');
+        if(!Object.hasOwn(values,oldName))continue;
+        if(next!==oldName&&Object.hasOwn(values,next)&&values[next])throw Error(`Client ${row.id} already has a value under the new field name.`);
+        values[next]=values[oldName];
+        if(next!==oldName)delete values[oldName];
+        this.db.prepare('UPDATE clients SET custom_fields_json=? WHERE id=?').run(JSON.stringify(values),row.id);
+      }
+      fields[index]=next;
+      this.saveClientFields(fields);
+      this.bumpRevision();
+    });
+    return {fields:this.getClientFields(),revision:this.revision()};
+  }
   saveCompanyName(value){
-    return this.saveCompanyProfile({name:value,logo:this.getCompanyProfile().logo}).name;
+    return this.saveCompanyProfile({...this.getCompanyProfile(),name:value}).name;
   }
   saveCompanyProfile(profile){
     if(!profile||typeof profile!=='object')throw Error('Invalid company profile.');
@@ -212,13 +236,17 @@ class Store {
     const logo=profile.logo||'';
     if(typeof logo!=='string'||logo.length>7*1024*1024)throw Error('Company logo must be smaller than 5 MB.');
     if(logo&&!/^data:image\/(png|jpeg|webp|gif|bmp|x-icon|vnd\.microsoft\.icon);base64,[a-zA-Z0-9+/=]+$/.test(logo))throw Error('Company logo must be a PNG, JPEG, WebP, GIF, BMP, or ICO image.');
+    if(profile.description!==undefined&&typeof profile.description!=='string')throw Error('Company description must be text.');
+    const description=profile.description===undefined?this.getCompanyProfile().description:profile.description.trim();
+    if(description.length>500)throw Error('Company description must be 500 characters or fewer.');
     this.transaction(()=>{
       this.db.prepare("INSERT INTO workspace_meta(key,value) VALUES('company_name',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(company);
       this.db.prepare("INSERT INTO workspace_meta(key,value) VALUES('company_logo',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(logo);
+      this.db.prepare("INSERT INTO workspace_meta(key,value) VALUES('company_description',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(description);
       this.db.prepare('UPDATE users SET company_name=?, updated_at=CURRENT_TIMESTAMP').run(company);
       this.db.prepare('UPDATE company_login SET company_name=?, updated_at=CURRENT_TIMESTAMP WHERE id=1').run(company);
     });
-    return {name:company,logo};
+    return {name:company,logo,description};
   }
   saveUser(user){
     if(!user||typeof user!=='object')throw Error('Invalid user payload.');

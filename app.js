@@ -87,7 +87,10 @@ function servicePeriodApplies(client,periodEnd,filing){
 function obligationsForYear(y){return state.clients.map(c=>clientForYear(c,y)).flatMap(c=>forms.filter(f=>c.forms.includes(f.id)).flatMap(f=>f.periods.filter(p=>!c.periods?.[f.id]||c.periods[f.id].includes(p)).map(p=>{let i=f.periods.indexOf(p),end=p==='Annual'?`${y}-12-31`:p.startsWith('Q')?`${y}-${String((i+1)*3).padStart(2,'0')}-31`:`${y}-${String(i+1).padStart(2,'0')}-31`;const filingKey=`${c.id}:${y}:${f.id}:${p}`;return {c,f,p,end,due:due(f,p,y),key:filingKey,filing:state.filings[filingKey]}}).filter(o=>o.end>=c.start&&servicePeriodApplies(c,o.end,o.filing))))}
 function obligations(){return obligationsForYear(year)}
 function clientFiveYearSummary(id,endingYear){
-  return Array.from({length:5},(_,i)=>endingYear-4+i).map(taxYear=>{
+  const client=state.clients.find(c=>c.id===id);
+  const startYear=Number(String(client?.start||'').slice(0,4));
+  const firstYear=Number.isInteger(startYear)&&startYear>0?Math.max(endingYear-4,startYear):endingYear-4;
+  return Array.from({length:Math.max(0,endingYear-firstYear+1)},(_,i)=>firstYear+i).map(taxYear=>{
     const items=obligationsForYear(taxYear).filter(o=>o.c.id===id);
     return {year:taxYear,total:items.length,filed:items.filter(o=>o.filing).length,status:complianceStatus(items)};
   });
@@ -697,10 +700,11 @@ function clientModal(id,reuse=false){
     const history=document.createElement('dialog');
     history.id='year-history-dialog';
     history.setAttribute('aria-labelledby','year-history-title');
-    const years=[...new Set([year,...Object.keys(original.yearProfiles||{}).map(Number),...Object.keys(state.filings).filter(k=>k.startsWith(id+':')).map(k=>Number(k.split(':')[1]))])].sort((a,b)=>b-a);
+    const startYear=Number(String(original.start||'').slice(0,4));
+    const years=[...new Set([year,...Object.keys(original.yearProfiles||{}).map(Number),...Object.keys(state.filings).filter(k=>k.startsWith(id+':')).map(k=>Number(k.split(':')[1]))])].filter(y=>!Number.isInteger(startYear)||!startYear||y>=startYear).sort((a,b)=>b-a);
     const fiveYears=clientFiveYearSummary(id,year);
-    history.innerHTML=`<h2 id="year-history-title">${esc(c.name)} — Year history</h2><p>Five-year compliance summary ending in ${year}. Select a year to view its details.</p>
-      <div class="table-scroll"><table><thead><tr><th>Tax year</th><th>Filed</th><th>Obligations</th><th>Status</th></tr></thead><tbody>${fiveYears.map(row=>`<tr><td>${row.year}</td><td>${row.filed}</td><td>${row.total}</td><td>${badge(row.status)}</td></tr>`).join('')}</tbody></table></div><button type="button" class="btn secondary" id="export-five-year">Export five-year summary</button>
+    history.innerHTML=`<h2 id="year-history-title">${esc(c.name)} — Year history</h2><p>${fiveYears.length?`Compliance summary from ${fiveYears[0].year} through ${year}. Select a year to view its details.`:`No filing history before ${startYear}.`}</p>
+      <div class="table-scroll"><table><thead><tr><th>Tax year</th><th>Filed</th><th>Obligations</th><th>Status</th></tr></thead><tbody>${fiveYears.map(row=>`<tr><td>${row.year}</td><td>${row.filed}</td><td>${row.total}</td><td>${badge(row.status)}</td></tr>`).join('')}</tbody></table></div><button type="button" class="btn secondary" id="export-five-year" ${fiveYears.length?'':'disabled'}>Export history summary</button>
       <div class="selected-pills">${years.map(y=>`<button type="button" class="btn" data-history-year="${y}">${y}${original.yearProfiles?.[y]?' · Configured':''}</button>`).join('')}</div>
       <div class="modal-actions"><button type="button" class="btn" id="back-history">Back</button></div>`;
     const dismiss=()=>{
@@ -711,7 +715,7 @@ function clientModal(id,reuse=false){
     history.addEventListener('cancel',e=>{e.preventDefault();dismiss();});
     m.addEventListener('close',dismiss,{once:true});
     history.querySelector('#back-history').onclick=dismiss;
-    history.querySelector('#export-five-year').onclick=()=>exportToExcel(`${c.name}-five-year-history`,['Tax year','Filed','Obligations','Status'],fiveYears.map(row=>[row.year,row.filed,row.total,row.status]));
+    history.querySelector('#export-five-year').onclick=()=>exportToExcel(`${c.name}-year-history`,['Tax year','Filed','Obligations','Status'],fiveYears.map(row=>[row.year,row.filed,row.total,row.status]));
     history.querySelectorAll('[data-history-year]').forEach(button=>button.onclick=()=>{
       const selected=Number(button.dataset.historyYear);
       dismiss();year=selected;render();clientModal(id,true);

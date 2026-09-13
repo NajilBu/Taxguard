@@ -3,6 +3,8 @@ const path=require('node:path');
 const {Store}=require('./database.cjs');
 const {seedSamples}=require('./seed.cjs');
 const {parseXlsxBuffer}=require('./migration.cjs');
+const dataTransfer=require('./data-transfer.cjs');
+const excelTransfer=require('./excel-transfer.cjs');
 const root=path.join(__dirname,'..');
 let input='';
 process.stdin.setEncoding('utf8');
@@ -25,6 +27,11 @@ process.stdin.on('end',async()=>{
     else if(action==='documents:save')value=store.saveClientDocument(data);
     else if(action==='documents:get')value=store.getClientDocument(data?.id);
     else if(action==='documents:delete')value=store.deleteClientDocument(data?.id);
+    else if(action==='data:export')value=dataTransfer.exportData(store,data?.sections);
+    else if(action==='data:preview-import')value=dataTransfer.previewDataImport(store,data?.payload,data?.sections);
+    else if(action==='data:import')value=dataTransfer.importData(store,data?.payload,data?.sections,revision);
+    else if(action==='data:export-xlsx')value=await excelTransfer.exportWorkbook(store,data?.sections,data?.options);
+    else if(action==='data:read-xlsx')value=await excelTransfer.readWorkbook(data?.base64);
     else if(action==='clients:import-csv')value=store.importClientsCsv(data?.text);
     else if(action==='clients:import-xlsx'){
       if(typeof data?.base64!=='string'||data.base64.length>7*1024*1024||!/^[A-Za-z0-9+/]+={0,2}$/.test(data.base64))throw Error('Invalid Excel file.');
@@ -32,6 +39,7 @@ process.stdin.on('end',async()=>{
     }
     else if(action==='clients:fields:get')value=store.getClientFields();
     else if(action==='clients:fields:save')value=store.saveClientFields(data?.fields);
+    else if(action==='clients:fields:rename')value=store.renameClientField(data?.oldName,data?.newName,revision);
     else if(action==='calendar:list')value=store.getCalendarRules();
     else if(action==='calendar:save')value=store.saveCalendarRule(data);
     else if(action==='calendar:delete')value=store.deleteCalendarRule(data?.id);

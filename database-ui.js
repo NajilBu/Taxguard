@@ -154,11 +154,27 @@ function downloadClientPdf(filename,title,subtitle,yearVal,analysis,headers,rows
 
 
 
+function normalizedReportScope(input){
+  const from=Number(typeof input==='object'?input.from:input||year);
+  const to=Number(typeof input==='object'?input.to:input||year);
+  const clientIds=typeof input==='object'&&Array.isArray(input.clientIds)?input.clientIds.map(Number):state.clients.map(c=>c.id);
+  return {from,to,clientIds};
+}
+function scopedReportClients(scope){
+  const ids=new Set(scope.clientIds);
+  return state.clients.filter(c=>ids.has(c.id)&&String(c.start||'')<=`${scope.to}-12-31`).map(c=>clientForYear(c,scope.to));
+}
+function scopedReportObligations(scope){
+  const ids=new Set(scope.clientIds),records=[];
+  for(let y=scope.from;y<=scope.to;y++)records.push(...obligationsForYear(y).filter(o=>ids.has(o.c.id)));
+  return sortReportByDueDate(records);
+}
+function reportYearLabel(scope){return scope.from===scope.to?String(scope.to):`${scope.from}–${scope.to}`;}
 function getSummaryReportData(reportYear){
-  const y=reportYear||year;
-  const obs=obligations();
-  const headers=['Client Name','TIN','Business Type','Tax Type','Client Status','Start of Filing',`Total Obligations (${y})`,'Completed Filings','Pending Filings','Overdue Filings','Compliance Rate','Annual Status'];
-  const rows=state.clients.map(c=>clientForYear(c)).map(c=>{
+  const scope=normalizedReportScope(reportYear),label=reportYearLabel(scope);
+  const obs=scopedReportObligations(scope);
+  const headers=['Client Name','TIN','Business Type','Tax Type','Client Status','Start of Filing',`Total Obligations (${label})`,'Completed Filings','Pending Filings','Overdue Filings','Compliance Rate','Annual Status'];
+  const rows=scopedReportClients(scope).map(c=>{
     const cObs=obs.filter(o=>o.c.id===c.id);
     const cDone=cObs.filter(o=>o.filing).length;
     const cOver=cObs.filter(o=>!o.filing&&o.due<today).length;
@@ -166,7 +182,7 @@ function getSummaryReportData(reportYear){
     const cPct=cObs.length?Math.round(cDone/cObs.length*100):0;
     return [c.name,c.tin,c.type,c.tax,c.status,c.start,cObs.length,cDone,cPending,cOver,`${cPct}%`,status(c,obs)];
   });
-  return { title:`TaxGuard-Compliance-Summary-${y}.xls`, headers, rows, obs };
+  return { title:`TaxGuard-Compliance-Summary-${scope.from}-${scope.to}.xls`, headers, rows, obs };
 }
 
 function sortReportByDueDate(records){
@@ -174,27 +190,28 @@ function sortReportByDueDate(records){
 }
 
 function getFilingsReportData(reportYear){
-  const y=reportYear||year;
-  const obs=sortReportByDueDate(obligations());
+  const scope=normalizedReportScope(reportYear);
+  const obs=scopedReportObligations(scope);
   const headers=['Client Name','TIN','BIR Form','Covered Period','Tax Year','Due Date','Filing Status','Filing Date','Confirmation / Reference','Remarks'];
   const rows=obs.map(o=>[
     o.c.name,
     o.c.tin,
     o.f.id,
     o.p,
-    y,
+    Number(o.key.split(':')[1]),
     o.due,
     filingStatus(o),
     o.filing?.date||'',
     o.filing?.reference||'',
     o.filing?.remarks||''
   ]);
-  return { title:`TaxGuard-Filing-Log-${y}.xls`, headers, rows, obs };
+  return { title:`TaxGuard-Filing-Log-${scope.from}-${scope.to}.xls`, headers, rows, obs };
 }
 
-function getClientsReportData(){
+function getClientsReportData(reportScope){
+  const scope=normalizedReportScope(reportScope);
   const headers=['Client ID','Client Name','TIN','Business Type','Tax Type','Status','Start of Filing','Required BIR Forms','Remarks'];
-  const rows=state.clients.map(c=>clientForYear(c)).map(c=>[
+  const rows=scopedReportClients(scope).map(c=>[
     c.id,
     c.name,
     c.tin,
@@ -205,7 +222,7 @@ function getClientsReportData(){
     c.forms.join('; '),
     c.remarks||''
   ]);
-  return { title:'TaxGuard-Client-Master.xls', headers, rows };
+  return { title:`TaxGuard-Client-Master-${scope.from}-${scope.to}.xls`, headers, rows };
 }
 
 function renderSvgDonut(slices,pendingOrSub,overOrText,totalCount,pctVal){
@@ -273,12 +290,35 @@ function renderSvgFormBars(obsOrItems){
   return `<svg width="100%" height="${h}" viewBox="0 0 260 ${h}">${rowsSvg}</svg>`;
 }
 
+function openReportSetup(reportType){
+  const titles={summary:'Annual Compliance Summary',filings:'Filing Audit Log',clients:'Client Master Roster'};
+  const dialog=workspaceDialog(),ordered=[...state.clients].sort((a,b)=>a.name.localeCompare(b.name));
+  dialog.classList.add('report-setup-modal');
+  dialog.innerHTML=`<h2>Set up ${esc(titles[reportType]||titles.summary)}</h2><p>Choose the tax years and clients to include. The preview, Excel export, and PDF will use this selection.</p><form id="report-setup-form"><div class="data-transfer-year-range"><label>From year<input id="report-year-from" type="number" min="2000" max="2100" value="${year}" required></label><label>To year<input id="report-year-to" type="number" min="2000" max="2100" value="${year}" required></label></div><div class="data-client-toolbar"><input id="report-client-search" type="search" placeholder="Search client or TIN" aria-label="Search clients"><button type="button" class="btn" id="report-select-all">Select all</button><button type="button" class="btn" id="report-clear-all">Clear all</button></div><p id="report-client-count" class="subtle"></p><div class="data-transfer-client-table"><table><thead><tr><th></th><th>Client</th><th>TIN</th></tr></thead><tbody>${ordered.map(c=>`<tr data-report-client-search="${esc(`${c.name} ${c.tin||''}`.toLowerCase())}"><td><input type="checkbox" name="report-client" value="${c.id}" checked></td><td>${esc(c.name)}</td><td>${esc(c.tin)}</td></tr>`).join('')}</tbody></table></div><p id="report-setup-error" role="alert"></p><div class="modal-actions"><button type="button" class="btn" id="cancel-report-setup">Cancel</button><button type="submit" class="btn primary">Open report preview</button></div></form>`;
+  const rows=[...dialog.querySelectorAll('[data-report-client-search]')],count=dialog.querySelector('#report-client-count');
+  const updateCount=()=>{count.textContent=`${dialog.querySelectorAll('[name="report-client"]:checked').length} of ${ordered.length} clients selected`;};
+  dialog.querySelector('#report-client-search').oninput=e=>{const query=e.target.value.trim().toLowerCase();rows.forEach(row=>row.hidden=!!query&&!row.dataset.reportClientSearch.includes(query));};
+  dialog.querySelector('#report-select-all').onclick=()=>{rows.filter(row=>!row.hidden).forEach(row=>row.querySelector('input').checked=true);updateCount();};
+  dialog.querySelector('#report-clear-all').onclick=()=>{rows.filter(row=>!row.hidden).forEach(row=>row.querySelector('input').checked=false);updateCount();};
+  dialog.querySelector('.data-transfer-client-table').onchange=updateCount;
+  dialog.querySelector('#cancel-report-setup').onclick=()=>closeModal(dialog);
+  dialog.querySelector('#report-setup-form').onsubmit=e=>{
+    e.preventDefault();
+    const from=Number(dialog.querySelector('#report-year-from').value),to=Number(dialog.querySelector('#report-year-to').value);
+    const clientIds=[...dialog.querySelectorAll('[name="report-client"]:checked')].map(input=>Number(input.value));
+    const error=dialog.querySelector('#report-setup-error');
+    if(!Number.isInteger(from)||!Number.isInteger(to)||from<2000||to>2100||from>to||to-from>20){error.textContent='Choose a valid range of up to 21 tax years.';return;}
+    if(!clientIds.length){error.textContent='Select at least one client.';return;}
+    closeModal(dialog,()=>openReportPreview(reportType,{from,to,clientIds}));
+  };
+  updateCount();dialog.showModal();
+}
 function openReportPreview(reportType,reportYear){
   const type=typeof reportType==='string'?reportType:'summary';
-  const y=reportYear||year;
+  const scope=normalizedReportScope(reportYear),y=scope.to,yearLabel=reportYearLabel(scope);
   const m=workspaceDialog();
   if(!m)return;
-  const obs=sortReportByDueDate(obligations());
+  const obs=scopedReportObligations(scope),clients=scopedReportClients(scope);
   const todayFormatted=new Date().toLocaleDateString('en-PH',{year:'numeric',month:'short',day:'numeric'});
 
   m.classList.add('report-modal');
@@ -343,8 +383,8 @@ function openReportPreview(reportType,reportYear){
       </div>
     `;
 
-    defaultAnalysis=`Filing Audit Log & Submission Verification for Tax Year ${y}:\n\n`+
-      `• Audit Trail Scope: Monitored ${obs.length} statutory obligations for ${y}, with ${done} submissions recorded in the centralized register.\n`+
+    defaultAnalysis=`Filing Audit Log & Submission Verification for Tax Year ${yearLabel}:\n\n`+
+      `• Audit Trail Scope: Monitored ${obs.length} statutory obligations for ${yearLabel}, with ${done} submissions recorded in the centralized register.\n`+
       `• Filing Timeliness: ${onTime} returns submitted on-time prior to statutory due dates (${done?Math.round(onTime/done*100):0}% on-time rate).\n`+
       (over>0?`• Audit Exceptions: ${over} obligations are currently overdue and require immediate follow-up to clear statutory liabilities.\n`:`• Audit Exceptions: Zero overdue obligations detected across all registered accounts.\n`)+
       `• Reference Verification: All electronic confirmation numbers and return filing dates are indexed for audit defensibility and BIR compliance inspections.`;
@@ -374,24 +414,24 @@ function openReportPreview(reportType,reportYear){
       </tr>
     `).join('');
 
-    const rep=getFilingsReportData(y);
+    const rep=getFilingsReportData(scope);
     pdfExportHeaders=rep.headers;
     pdfExportRows=rep.rows;
     exportFn=()=>{
       exportToExcel(rep.title,rep.headers,rep.rows);
-      notify(`Filing audit log for ${y} exported to Excel.`);
+      notify(`Filing audit log for ${yearLabel} exported to Excel.`);
     };
 
   }else if(type==='clients'){
     reportTitle='TAXGUARD CLIENT MASTER ROSTER';
     reportSub='Registered Taxpayer Directory, Entity Types & Statutory Form Assignments';
-    const totalClients=state.clients.length;
-    const activeCount=state.clients.map(c=>clientForYear(c)).filter(c=>c.status==='Active').length;
-    const vatCount=state.clients.map(c=>clientForYear(c)).filter(c=>c.tax==='VAT').length;
-    const nvatCount=state.clients.map(c=>clientForYear(c)).filter(c=>c.tax==='NVAT').length;
-    const soleCount=state.clients.map(c=>clientForYear(c)).filter(c=>c.type==='Sole proprietorship').length;
-    const corpCount=state.clients.map(c=>clientForYear(c)).filter(c=>c.type==='Corporation').length;
-    const partCount=state.clients.map(c=>clientForYear(c)).filter(c=>c.type==='Partnership').length;
+    const totalClients=clients.length;
+    const activeCount=clients.filter(c=>c.status==='Active').length;
+    const vatCount=clients.filter(c=>c.tax==='VAT').length;
+    const nvatCount=clients.filter(c=>c.tax==='NVAT').length;
+    const soleCount=clients.filter(c=>c.type==='Sole proprietorship').length;
+    const corpCount=clients.filter(c=>c.type==='Corporation').length;
+    const partCount=clients.filter(c=>c.type==='Partnership').length;
     reportBadge=`${activeCount} Active Entities`;
 
     metricsHtml=`
@@ -450,7 +490,7 @@ function openReportPreview(reportType,reportYear){
         <th>Required BIR Forms</th>
       </tr>
     `;
-    tableRowsHtml=state.clients.map(c=>clientForYear(c)).map(c=>`
+    tableRowsHtml=clients.map(c=>`
       <tr>
         <td><strong>${esc(c.name)}</strong></td>
         <td><small class="subtle">${esc(c.tin)}</small></td>
@@ -462,7 +502,7 @@ function openReportPreview(reportType,reportYear){
       </tr>
     `).join('');
 
-    const rep=getClientsReportData();
+    const rep=getClientsReportData(scope);
     pdfExportHeaders=rep.headers;
     pdfExportRows=rep.rows;
     exportFn=()=>{
@@ -472,7 +512,7 @@ function openReportPreview(reportType,reportYear){
 
   }else{
     // Annual Compliance Summary (default)
-    reportTitle='TAXGUARD ANNUAL COMPLIANCE SUMMARY';
+    reportTitle=scope.from===scope.to?'TAXGUARD ANNUAL COMPLIANCE SUMMARY':'TAXGUARD MULTI-YEAR COMPLIANCE SUMMARY';
     reportSub='Executive Statutory Compliance Audit, Filing Breakdown & Analysis';
     const done=obs.filter(o=>o.filing).length;
     const over=obs.filter(o=>!o.filing&&o.due<today).length;
@@ -509,7 +549,7 @@ function openReportPreview(reportType,reportYear){
       </div>
     `;
 
-    defaultAnalysis=`Annual Statutory Compliance Analysis for Tax Year ${y}:\n\n`+
+    defaultAnalysis=`Annual Statutory Compliance Analysis for Tax Year ${yearLabel}:\n\n`+
       `• Overall Standing: Current compliance rate is ${pct}%, with ${done} of ${obs.length} statutory obligations officially completed across all registered taxpayers.\n`+
       `• Pending Pipeline: ${pending} obligations remain in active status for upcoming quarter and monthly BIR filing deadlines.\n`+
       (over>0?`• Risk Alert: ${over} obligations are currently overdue and require urgent submission to prevent BIR surcharges and compromise penalties.\n`:`• Risk Status: Zero overdue obligations detected across all monitored taxpayer accounts.\n`)+
@@ -527,7 +567,7 @@ function openReportPreview(reportType,reportYear){
         <th>Status</th>
       </tr>
     `;
-    tableRowsHtml=state.clients.map(c=>clientForYear(c)).map(c=>{
+    tableRowsHtml=clients.map(c=>{
       const cObs=obs.filter(o=>o.c.id===c.id);
       const cDone=cObs.filter(o=>o.filing).length;
       const cOver=cObs.filter(o=>!o.filing&&o.due<today).length;
@@ -546,12 +586,12 @@ function openReportPreview(reportType,reportYear){
       </tr>`;
     }).join('');
 
-    const rep=getSummaryReportData(y);
+    const rep=getSummaryReportData(scope);
     pdfExportHeaders=rep.headers;
     pdfExportRows=rep.rows;
     exportFn=()=>{
       exportToExcel(rep.title,rep.headers,rep.rows);
-      notify(`Compliance summary report for ${y} exported to Excel.`);
+      notify(`Compliance summary report for ${yearLabel} exported to Excel.`);
     };
   }
 
@@ -589,7 +629,8 @@ function openReportPreview(reportType,reportYear){
           </div>
         </div>
         <div class="sheet-meta">
-          <strong>TAX YEAR: ${y}</strong><br>
+          <strong>TAX ${scope.from===scope.to?'YEAR':'YEARS'}: ${yearLabel}</strong><br>
+          <span>Clients included: ${clients.length}</span><br>
           <span>Generated: ${todayFormatted}</span><br>
           <span>Standing: ${reportBadge}</span>
         </div>
@@ -636,7 +677,7 @@ function openReportPreview(reportType,reportYear){
   m.querySelector('#preview-export-excel')?.addEventListener('click',exportFn);
   m.querySelector('#preview-save-pdf')?.addEventListener('click',async()=>{
     const cleanName=reportTitle.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'');
-    const pdfFilename=`${cleanName}-${y}.pdf`;
+    const pdfFilename=`${cleanName}-${scope.from}-${scope.to}.pdf`;
     if(window.taxguardDB?.savePdf){
       try{
         notify('Preparing PDF save dialog...');
@@ -652,7 +693,7 @@ function openReportPreview(reportType,reportYear){
       }
     }else{
       try{
-        downloadClientPdf(pdfFilename,reportTitle,reportSub,y,displayText?.textContent||defaultAnalysis,pdfExportHeaders,pdfExportRows);
+        downloadClientPdf(pdfFilename,reportTitle,reportSub,yearLabel,displayText?.textContent||defaultAnalysis,pdfExportHeaders,pdfExportRows);
         notify('Report PDF downloaded to Downloads.');
         closeModal(m);
       }catch(err){
@@ -726,6 +767,35 @@ function persistCustomClientFields(fields){
   }
   render();
 }
+function confirmClientFieldChange(title,message,action,label='Confirm change'){
+  const dialog=workspaceDialog();
+  dialog.innerHTML=`<h2>${esc(title)}</h2><p>${esc(message)}</p><p id="client-field-change-error" role="alert"></p><div class="modal-actions"><button type="button" class="btn" id="cancel-client-field-change">Cancel</button><button type="button" class="btn primary" id="confirm-client-field-change">${esc(label)}</button></div>`;
+  dialog.querySelector('#cancel-client-field-change').onclick=()=>closeModal(dialog);
+  dialog.querySelector('#confirm-client-field-change').onclick=()=>{
+    try{action();closeModal(dialog);}catch(error){dialog.querySelector('#client-field-change-error').textContent=error.message;}
+  };
+  dialog.showModal();
+}
+function editClientField(oldName){
+  const dialog=workspaceDialog();
+  dialog.innerHTML=`<h2>Rename client field</h2><p>Values already entered for clients will move to the new field name.</p><form id="rename-client-field-form"><label for="rename-client-field-input">Field name</label><input id="rename-client-field-input" required maxlength="50" value="${esc(oldName)}"><p id="rename-client-field-error" role="alert"></p><div class="modal-actions"><button type="button" class="btn" id="cancel-rename-client-field">Cancel</button><button class="btn primary">Review rename</button></div></form>`;
+  dialog.querySelector('#cancel-rename-client-field').onclick=()=>closeModal(dialog);
+  dialog.querySelector('#rename-client-field-form').onsubmit=e=>{
+    e.preventDefault();const next=dialog.querySelector('#rename-client-field-input').value.trim();
+    if(next===oldName){closeModal(dialog);return;}
+    if(!next||customClientFields.some(field=>field!==oldName&&field.toLowerCase()===next.toLowerCase())){dialog.querySelector('#rename-client-field-error').textContent='Choose a unique field name.';return;}
+    confirmClientFieldChange('Confirm field rename',`Rename “${oldName}” to “${next}”? Existing client values will be kept.`,()=>{
+      if(database?.renameClientField){database.renameClientField(oldName,next,databaseRevision);restoreDatabase();customClientFields=database.getClientFields();}
+      else{
+        for(const client of state.clients){if(Object.hasOwn(client.customFields||{},oldName)){client.customFields[next]=client.customFields[oldName];delete client.customFields[oldName];}}
+        save();
+        persistCustomClientFields(customClientFields.map(field=>field===oldName?next:field));
+      }
+      closeModal(dialog);render();notify('Client field renamed.');
+    },'Rename field');
+  };
+  dialog.showModal();
+}
 function backupSettingsPanel(){
   if(!database?.saveBackup)return '';
   return `<div class="panel backup-panel" style="margin-top:24px"><div class="panel-head"><div><h2>Backup &amp; restore</h2><p>The desktop app saves a daily SQLite backup on launch. You can also save a complete copy of clients, filings, users, documents, company profile, and calendar adjustments.</p></div></div><div class="panel-body storage-actions"><button type="button" class="btn primary" id="save-full-backup">Save backup</button><button type="button" class="btn secondary" id="restore-full-backup">Restore backup</button></div></div>`;
@@ -768,7 +838,7 @@ function getWorkspaceCompanyProfile(){
       return profile;
     }catch(e){}
   }
-  return lastCompanyProfile||{name:getWorkspaceCompanyName(),logo:localStorage.getItem('taxguard_company_logo')||''};
+  return lastCompanyProfile||{name:getWorkspaceCompanyName(),logo:localStorage.getItem('taxguard_company_logo')||'',description:localStorage.getItem('taxguard_company_description')||''};
 }
 let companyProfileDraft=null;
 
@@ -791,7 +861,7 @@ function applyWorkspaceCompanyProfile(profile){
   const updatedAuth={...currentAuth,company};
   sessionStorage.setItem('taxguard_auth',JSON.stringify(updatedAuth));
   const firmEl=document.querySelector('.firm .firm-info');
-  if(firmEl)firmEl.innerHTML=`${esc(company)}<small>Compliance team</small>`;
+  if(firmEl)firmEl.innerHTML=`${esc(company)}<small>${esc(profile.description||'Compliance team')}</small>`;
   const loginDisplay=document.querySelector('#login-company-display');
   if(loginDisplay)loginDisplay.textContent=company;
   setCompanyLogoSlot(document.querySelector('.firm .avatar'),profile.logo,company);
@@ -805,6 +875,7 @@ function persistWorkspaceCompanyProfile(profile){
   if(!window.taxguardDB){
     localStorage.setItem('taxguard_company_name',saved.name);
     localStorage.setItem('taxguard_company_logo',saved.logo||'');
+    localStorage.setItem('taxguard_company_description',saved.description||'');
     const users=fetchWorkstationUsers().map(user=>({...user,company_name:saved.name}));
     localStorage.setItem('taxguard_users',JSON.stringify(users));
   }
@@ -1226,29 +1297,130 @@ settings=function(){
   }).join('');
 
   return heading('Settings','Personalize the TaxGuard workspace.','')+`
-    <div class="panel company-settings-panel" style="margin-bottom:24px">
+    <div class="profile-settings-grid"><div class="panel company-settings-panel">
       <div class="panel-head"><div><h2>Company Profile</h2><p>Set the firm name and logo shown throughout this workspace and in reports.</p></div></div>
       <div class="panel-body">
         <form id="company-profile-form" class="company-profile-form">
-          <div class="company-name-editor"><label for="company-name-input" style="margin-top:0">Company / Firm Name</label><input id="company-name-input" name="company_name" required maxlength="120" value="${esc(companyName)}"><button type="submit" class="btn primary">Save company profile</button></div>
           <div class="company-logo-editor">
             <button type="button" class="company-logo-preview ${companyProfile.logo?'has-logo':''}" id="company-logo-preview" aria-label="Preview or change company logo" title="Preview or change company logo">${companyLogoPreview}</button>
             <div><span>Company Logo</span><small>Click the logo to preview or change it.</small><input id="company-logo-input" name="company_logo" type="file" hidden accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/x-icon,image/vnd.microsoft.icon,.jpg,.jpeg,.jfif,.ico"><small id="company-logo-error" class="company-logo-error" aria-live="polite"></small></div>
           </div>
+          <div class="company-name-editor"><label for="company-name-input" style="margin-top:0">Company / Firm Name</label><input id="company-name-input" name="company_name" required maxlength="120" value="${esc(companyName)}"></div>
+          <div class="company-description-editor"><label for="company-description-input">Company Description</label><textarea id="company-description-input" name="company_description" maxlength="500" rows="2" placeholder="Briefly describe your company">${esc(companyProfile.description||'')}</textarea></div>
+          <button type="submit" class="btn primary company-profile-save">Save company profile</button>
         </form>
       </div>
     </div>
-    <div class="panel custom-fields-panel" style="margin-bottom:24px"><div class="panel-head"><div><h2>Client list fields</h2><p>Add text fields that appear in client records and the directory.</p></div></div><div class="panel-body"><div class="selected-pills">${customClientFields.map(field=>`<span class="form-pill">${esc(field)} <button type="button" data-remove-client-field="${esc(field)}" aria-label="Remove ${esc(field)}">×</button></span>`).join('')||'<span class="subtle">No custom fields.</span>'}</div><form id="add-client-field-form" class="storage-actions"><input id="new-client-field" maxlength="50" required placeholder="Field name, e.g. RDO"><button class="btn secondary">Add field</button></form></div></div>
+    <div class="panel custom-fields-panel"><div class="panel-head"><div><h2>Client list fields</h2><p>Manage extra details shown for each client.</p></div></div><div class="panel-body"><div class="selected-pills">${customClientFields.map(field=>`<span class="form-pill">${esc(field)} <button type="button" data-edit-client-field="${esc(field)}" aria-label="Rename ${esc(field)}" title="Rename field">✎</button><button type="button" data-remove-client-field="${esc(field)}" aria-label="Remove ${esc(field)}" title="Remove field">×</button></span>`).join('')||'<span class="subtle">No custom fields.</span>'}</div><form id="add-client-field-form" class="storage-actions"><input id="new-client-field" maxlength="50" required placeholder="Field name, e.g. RDO"><button class="btn secondary">Add field</button></form></div></div></div>
     <div class="settings-grid">
       <div class="panel settings-panel">
         <div class="panel-head"><div><h2>Color theme</h2><p>Choose a preset workspace accent color.</p></div></div>
         <div class="theme-options">${[['blue','Blue'],['navy','Navy'],['green','Green'],['purple','Purple'],['orange','Orange'],['red','Red']].map(([v,l])=>`<button class="theme-option ${current===v?'active':''}" data-theme="${v}"><span class="theme-swatch ${v}"></span><span>${l}</span>${current===v?'<b>✓</b>':''}</button>`).join('')}</div>
       </div>
-      <div class="panel storage-panel"><div class="panel-head"><div><h2>Data storage</h2><p>${database?'Client records and filings are saved in SQLite, shared by localhost and the desktop app.':'Records are saved in this browser.'}</p></div></div><div class="panel-body storage-actions"><button type="button" class="btn secondary" id="export-records">Export records</button>${database?.importClientsCsv?'<button type="button" class="btn secondary" id="import-clients-csv">Import clients from CSV or Excel</button><input type="file" id="clients-csv-input" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>':''}${database?.importRecords&&state.clients.length===0?'<button type="button" class="btn secondary" id="import-records">Import browser records</button>':''}</div></div>
+      <div class="panel storage-panel"><div class="panel-head"><div><h2>Data export &amp; import</h2><p>Choose specific records to move between TaxGuard workstations. Full backup and restore are available below.</p></div></div><div class="panel-body data-transfer-actions"><button type="button" class="btn secondary" id="open-data-export">Export selected data</button><button type="button" class="btn secondary" id="open-data-import">Import selected data</button><small>Excel workbooks can include clients, filings, schedules, documents, and the company profile. User accounts and passwords are excluded.</small></div></div>
     </div>
     <div class="panel users-panel" style="margin-top:24px"><div class="panel-head"><div><h2>User Account Management</h2><p>Manage workstation accounts.</p></div><button type="button" class="btn primary" id="btn-add-user">+ Add user account</button></div><div class="panel-body" style="padding:0"><div class="table-scroll"><table><thead><tr><th>User account</th><th>Firm / display name</th><th>Role</th><th>Status</th></tr></thead><tbody>${usersRowsHtml}</tbody></table></div></div></div>
     <div class="panel reports-panel" style="margin-top:24px"><div class="panel-head"><div><h2>Compliance &amp; Audit Reports</h2><p>Click any report card below to open its executive preview with visual charts, custom commentary, and PDF or Excel export.</p></div><span class="subtle">${year} TAX YEAR</span></div><div class="panel-body"><div class="report-stat-strip"><div class="report-stat-card"><small>Total obligations (${year})</small><strong>${obs.length}</strong></div><div class="report-stat-card"><small>Filings completed</small><strong style="color:var(--green)">${done}</strong></div><div class="report-stat-card"><small>Compliance rate</small><strong>${pct}%</strong></div><div class="report-stat-card"><small>Overdue items</small><strong style="color:${over>0?'#c36959':'var(--ink)'}">${over}</strong></div></div><div class="reports-grid"><div class="report-card" id="open-report-preview" data-report="summary" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📊</span><div><strong>Annual Compliance Summary</strong><small>Client compliance standing, completion percentage, and obligation counts for ${year}.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; export &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF / Excel</span></div></div><div class="report-card" id="export-filings-report" data-report="filings" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📑</span><div><strong>Filing Audit Log</strong><small>Detailed submission trail with BIR confirmation numbers, filing dates, and periods.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; export &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF / Excel</span></div></div><div class="report-card" id="export-clients-report" data-report="clients" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">👥</span><div><strong>Client Master Roster</strong><small>Complete directory of registered taxpayers, TINs, tax types, and required BIR forms.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; export &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF / Excel</span></div></div></div></div></div>${backupSettingsPanel()}`;
 };
+const dataSectionLabels={clients:'Clients & tax profiles',filings:'Filing records',forms:'Form schedules',documents:'Client documents',companyProfile:'Company profile'};
+function dataSectionChoices(available,defaults=available){
+  return `<div class="data-section-choices">${available.map(key=>`<label><input type="checkbox" name="data-section" value="${key}" ${defaults.includes(key)?'checked':''}><span>${dataSectionLabels[key]}</span></label>`).join('')}</div>`;
+}
+function selectedDataSections(dialog){return [...dialog.querySelectorAll('input[name="data-section"]:checked')].map(input=>input.value);}
+function openDataExportDialog(){
+  if(!database?.exportDataXlsx){notify('Selective export requires SQLite.');return;}
+  const dialog=workspaceDialog();
+  const clients=(state.clients||[]).slice().sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+  const currentYear=new Date().getFullYear();
+  dialog.classList.add('data-export-modal');
+  dialog.innerHTML=`<h2>Export client data</h2><p>Select clients and a year range. Each selected client includes their profile and filing records for the selected years.</p><div class="data-client-toolbar"><input id="export-client-search" type="search" placeholder="Search by client name or TIN"><button type="button" class="btn" id="select-all-export-clients">Select all</button><button type="button" class="btn" id="clear-export-clients">Clear all</button></div><form id="data-export-form"><div class="data-transfer-client-table"><table><thead><tr><th></th><th>Client</th><th>TIN</th></tr></thead><tbody>${clients.map(c=>`<tr data-client-search="${esc(`${c.name} ${c.tin||''}`.toLowerCase())}"><td><input type="checkbox" name="export-client" value="${c.id}"></td><td>${esc(c.name)}</td><td>${esc(c.tin||'')}</td></tr>`).join('')}</tbody></table></div><div class="data-transfer-year-range"><label>From year<input type="number" id="export-year-from" min="2000" max="2100" value="${currentYear}"></label><label>To year<input type="number" id="export-year-to" min="2000" max="2100" value="${currentYear}"></label></div><div class="modal-actions"><button type="button" class="btn" id="cancel-data-export">Cancel</button><button class="btn primary">Export Excel workbook</button></div></form>`;
+  const rows=[...dialog.querySelectorAll('[data-client-search]')];
+  dialog.querySelector('#export-client-search').oninput=e=>{const query=e.target.value.trim().toLowerCase();rows.forEach(row=>row.hidden=!!query&&!row.dataset.clientSearch.includes(query));};
+  dialog.querySelector('#select-all-export-clients').onclick=()=>rows.filter(row=>!row.hidden).forEach(row=>row.querySelector('input').checked=true);
+  dialog.querySelector('#clear-export-clients').onclick=()=>rows.filter(row=>!row.hidden).forEach(row=>row.querySelector('input').checked=false);
+  dialog.querySelector('#cancel-data-export').onclick=()=>closeModal(dialog);
+  dialog.querySelector('#data-export-form').onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      const clientIds=[...dialog.querySelectorAll('input[name="export-client"]:checked')].map(input=>Number(input.value));
+      const yearFrom=Number(dialog.querySelector('#export-year-from').value),yearTo=Number(dialog.querySelector('#export-year-to').value);
+      if(!clientIds.length){notify('Select at least one client.');return;}
+      if(!Number.isInteger(yearFrom)||!Number.isInteger(yearTo)||yearFrom>yearTo){notify('Enter a valid year range.');return;}
+      const options={clientIds,yearFrom,yearTo};
+      if(database.saveDataXlsx){
+        const result=await database.saveDataXlsx(['clients','filings'],options);
+        if(result?.saved){closeModal(dialog);notify('Selected data exported.');}else notify('Export cancelled.');
+        return;
+      }
+      const base64=await database.exportDataXlsx(['clients','filings'],options);
+      const bytes=Uint8Array.from(atob(base64),character=>character.charCodeAt(0));
+      const url=URL.createObjectURL(new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+      const link=document.createElement('a');link.href=url;link.download=`TaxGuard-data-${new Date().toISOString().slice(0,10)}.xlsx`;link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
+      closeModal(dialog);notify('Selected data exported.');
+    }catch(error){notify('Export failed: '+error.message);}
+  };
+  dialog.showModal();
+}
+function dataImportSummary(summary,sections){
+  return `<div class="data-import-preview"><strong>Import preview</strong><ul>${sections.map(key=>{
+    const info=summary[key];
+    const detail=key==='forms'?`${info.new} new, ${info.updated} updated`:key==='companyProfile'?'Company name and logo will be replaced':`${info.new} new, ${info.skipped} already present`;
+    return `<li>${dataSectionLabels[key]}: ${detail}</li>`;
+  }).join('')}</ul><small>Existing clients with the same TIN and filings with the same key are kept. Only selected categories are imported.</small></div>`;
+}
+function openDataImportDialog(){
+  if(!database?.importData){notify('Selective import requires SQLite.');return;}
+  const dialog=workspaceDialog();
+  dialog.innerHTML=`<h2>Import data</h2><p>Choose a TaxGuard Excel export, then select the categories to import. Existing records are preserved unless you select form schedules or company profile.</p><input id="data-import-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><div id="data-import-sections"></div><div id="data-import-status" role="status"></div><div class="modal-actions"><button type="button" class="btn" id="cancel-data-import">Cancel</button><button type="button" class="btn primary" id="confirm-data-import" disabled>Import selected data</button></div>`;
+  dialog.querySelector('#cancel-data-import').onclick=()=>closeModal(dialog);
+  const status=dialog.querySelector('#data-import-status'),choices=dialog.querySelector('#data-import-sections'),confirm=dialog.querySelector('#confirm-data-import');
+  let selectedFile=null,payload=null;
+  const scopedPayload=()=>{
+    if(!payload)return payload;
+    const ids=new Set([...dialog.querySelectorAll('input[name="import-client"]:checked')].map(input=>Number(input.value)));
+    const from=Number(dialog.querySelector('#import-year-from')?.value),to=Number(dialog.querySelector('#import-year-to')?.value);
+    const clients=(payload.sections.clients||[]).filter(c=>!ids.size||ids.has(Number(c.id)));
+    const allowed=new Set(clients.map(c=>Number(c.id)));
+    const filings=Object.fromEntries(Object.entries(payload.sections.filings||{}).filter(([key])=>{const parts=key.split(':');const year=Number(parts[1]);return allowed.has(Number(parts[0]))&&(!Number.isInteger(from)||year>=from)&&(!Number.isInteger(to)||year<=to);}));
+    return {...payload,sections:{...payload.sections,clients,filings}};
+  };
+  const preview=()=>{
+    confirm.disabled=true;
+    const sections=selectedDataSections(dialog);
+    if(!sections.length){status.textContent='Select at least one data category.';return;}
+      try{const summary=database.previewDataImport(scopedPayload(),sections);status.innerHTML=dataImportSummary(summary,sections);confirm.disabled=false;}
+    catch(error){status.textContent='Import cannot proceed: '+error.message;}
+  };
+  choices.addEventListener('change',preview);
+  dialog.querySelector('#data-import-file').onchange=async e=>{
+    confirm.disabled=true;choices.innerHTML='';status.textContent='';selectedFile=e.target.files?.[0];payload=null;
+    if(!selectedFile)return;
+    if(selectedFile.size>5*1024*1024){status.textContent='Excel file exceeds 5 MB. Use a full SQLite backup for larger transfers.';return;}
+    const extension=selectedFile.name.split('.').pop()?.toLowerCase();
+    try{
+      if(extension!=='xlsx')throw Error('Choose a TaxGuard .xlsx export.');
+      const base64=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(Error('Could not read Excel file.'));reader.readAsDataURL(selectedFile);});
+      payload=await database.readDataXlsx(base64);
+      const available=Object.keys(payload.sections||{}).filter(key=>key in dataSectionLabels);
+      if(!available.length)throw Error('This workbook contains no supported data categories.');
+      const importedClients=payload.sections.clients||[];
+      choices.innerHTML=`<label>Data to import</label>${dataSectionChoices(['clients','filings'],['clients','filings'])}<div class="data-transfer-client-list">${importedClients.map(c=>`<label><input type="checkbox" name="import-client" value="${c.id}" checked><span>${esc(c.name)} <small>${esc(c.tin||'')}</small></span></label>`).join('')}</div><div class="data-transfer-year-range"><label>From year<input type="number" id="import-year-from" min="2000" max="2100" value="2000"></label><label>To year<input type="number" id="import-year-to" min="2000" max="2100" value="2100"></label></div>`;
+      if(!selectedDataSections(dialog).length)choices.querySelector('input[name="data-section"]').checked=true;
+      preview();
+    }catch(error){status.textContent='Could not read file: '+error.message;}
+  };
+  confirm.onclick=async()=>{
+    const sections=selectedDataSections(dialog);
+    if(!selectedFile||!sections.length)return;
+    confirm.disabled=true;
+    try{
+      database.importData(scopedPayload(),sections,databaseRevision);
+      restoreDatabase();customClientFields=database.getClientFields();window.refreshCompanyProfile?.();
+      closeModal(dialog);render();notify('Selected data imported.');
+    }catch(error){status.textContent='Import failed: '+error.message;confirm.disabled=false;}
+  };
+  dialog.showModal();
+}
 document.querySelector('footer span').textContent=database?'Saved to SQLite on this computer':'Changes saved in this browser';
 document.addEventListener('click',async e=>{
   if(e.target.closest('#company-logo-preview')){
@@ -1263,7 +1435,7 @@ document.addEventListener('click',async e=>{
   }
   if(e.target.closest('#remove-company-logo')){
     const company=String(document.querySelector('#company-name-input')?.value||getWorkspaceCompanyName()).trim();
-    companyProfileDraft={name:company,logo:''};
+    companyProfileDraft={...(companyProfileDraft||getWorkspaceCompanyProfile()),name:company,logo:''};
     const preview=document.querySelector('#company-logo-preview');
     if(preview){preview.textContent=getUserInitials(company);preview.classList.remove('has-logo');}
     const largePreview=document.querySelector('#company-logo-modal-preview');
@@ -1279,19 +1451,15 @@ document.addEventListener('click',async e=>{
   if(userRow){
     openUserAccountModal(userRow.dataset.userId);
   }
-  if(e.target.closest('#export-records')){
-    const payload={format:'taxguard-export-v1',state,forms};
-    const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}));
-    const a=document.createElement('a');a.href=url;a.download='TaxGuard-records.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
-  }
-  if(e.target.closest('#import-records')){
-    try{const result=await database.importRecords();if(result){restoreDatabase();render();notify('Browser records imported into SQLite.');}}catch(error){notify('Import failed: '+error.message);}
-  }
+  if(e.target.closest('#open-data-export'))openDataExportDialog();
+  if(e.target.closest('#open-data-import'))openDataImportDialog();
   const removeField=e.target.closest('[data-remove-client-field]');
   if(removeField){
-    try{persistCustomClientFields(customClientFields.filter(field=>field!==removeField.dataset.removeClientField));notify('Client field hidden; saved values are retained.');}catch(error){notify('Field not changed: '+error.message);}
+    const field=removeField.dataset.removeClientField;
+    confirmClientFieldChange('Remove client field',`Remove “${field}” from client forms and the directory? Saved values will remain available if you add this field again.`,()=>{persistCustomClientFields(customClientFields.filter(name=>name!==field));notify('Client field removed; saved values are retained.');},'Remove field');
   }
-  if(e.target.closest('#import-clients-csv'))document.querySelector('#clients-csv-input')?.click();
+  const editField=e.target.closest('[data-edit-client-field]');
+  if(editField)editClientField(editField.dataset.editClientField);
   if(e.target.closest('#save-full-backup')){
     try{const result=await database.saveBackup();if(result?.saved)notify('Complete backup saved.');}catch(error){notify('Backup failed: '+error.message);}
   }
@@ -1300,25 +1468,10 @@ document.addEventListener('click',async e=>{
   }
   const reportCard=e.target.closest('.report-card[data-report]');
   if(reportCard){
-    openReportPreview(reportCard.dataset.report,year);
+    openReportSetup(reportCard.dataset.report);
   }
 });
 document.addEventListener('change',async e=>{
-  if(e.target.id==='clients-csv-input'){
-    const file=e.target.files?.[0];if(!file)return;
-    try{
-      const extension=file.name.split('.').pop()?.toLowerCase();
-      let result;
-      if(extension==='csv')result=database.importClientsCsv(await file.text());
-      else if(extension==='xlsx'){
-        if(file.size>5*1024*1024)throw Error('Excel file exceeds 5 MB.');
-        const base64=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(Error('Could not read Excel file.'));reader.readAsDataURL(file);});
-        result=await database.importClientsXlsx(base64);
-      }else throw Error('Choose a CSV or .xlsx file.');
-      restoreDatabase();render();notify(`${result.imported} clients imported; ${result.skipped} existing TINs skipped.`);
-    }catch(error){notify('Import failed: '+error.message);}
-    return;
-  }
   if(e.target.id!=='company-logo-input'||!e.target.files?.[0])return;
   const file=e.target.files[0];
   const company=String(document.querySelector('#company-name-input')?.value||getWorkspaceCompanyName()).trim();
@@ -1345,7 +1498,7 @@ document.addEventListener('change',async e=>{
       const status=document.querySelector('#company-logo-modal-status');if(status)status.textContent=message;
       return;
     }
-    companyProfileDraft={name:document.querySelector('#company-name-input')?.value??company,logo:dataUrl};
+    companyProfileDraft={...(companyProfileDraft||getWorkspaceCompanyProfile()),name:document.querySelector('#company-name-input')?.value??company,logo:dataUrl};
     const preview=document.querySelector('#company-logo-preview');
     if(preview){image.alt='Company logo preview';preview.replaceChildren(image);preview.classList.add('has-logo');}
     const modal=document.querySelector('#modal');
@@ -1355,21 +1508,24 @@ document.addEventListener('change',async e=>{
   reader.readAsDataURL(file);
 });
 document.addEventListener('input',e=>{
-  if(e.target.id!=='company-name-input')return;
-  companyProfileDraft={...(companyProfileDraft||getWorkspaceCompanyProfile()),name:e.target.value};
+  if(e.target.id==='company-name-input')companyProfileDraft={...(companyProfileDraft||getWorkspaceCompanyProfile()),name:e.target.value};
+  if(e.target.id==='company-description-input')companyProfileDraft={...(companyProfileDraft||getWorkspaceCompanyProfile()),description:e.target.value};
 });
 document.addEventListener('submit',async e=>{
   if(e.target.id==='add-client-field-form'){
     e.preventDefault();
-    try{persistCustomClientFields([...customClientFields,e.target.querySelector('#new-client-field').value]);notify('Client field added.');}catch(error){notify('Field not added: '+error.message);}
+    const field=e.target.querySelector('#new-client-field').value.trim();
+    if(!field||customClientFields.some(name=>name.toLowerCase()===field.toLowerCase())){notify('Choose a unique field name.');return;}
+    confirmClientFieldChange('Add client field',`Add “${field}” to client records and the directory?`,()=>{persistCustomClientFields([...customClientFields,field]);notify('Client field added.');},'Add field');
     return;
   }
   if(e.target.id!=='company-profile-form')return;
   e.preventDefault();
   const company=String(new FormData(e.target).get('company_name')||'').trim();
+  const description=String(new FormData(e.target).get('company_description')||'').trim();
   try{
     const logo=(companyProfileDraft||getWorkspaceCompanyProfile()).logo;
-    persistWorkspaceCompanyProfile({name:company,logo});
+    persistWorkspaceCompanyProfile({name:company,logo,description});
     companyProfileDraft=null;
     render();
     notify('Company profile updated.');
@@ -1388,7 +1544,7 @@ document.addEventListener('keydown',e=>{
     const card=document.activeElement?.closest?.('.report-card[data-report]');
     if(card){
       e.preventDefault();
-      openReportPreview(card.dataset.report,year);
+      openReportSetup(card.dataset.report);
     }
   }
 });
