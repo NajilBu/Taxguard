@@ -6,6 +6,7 @@ module.exports=async function(win,root){
     if(!document.body.classList.contains('logged-in'))throw Error('Login failed');
     year=2026;go('clients');editClient();
     let f=document.querySelector('#client-form');
+    if(!document.querySelector('#client-registration-fields')?.checkVisibility()||!document.querySelector('#suggest-client-forms')?.checkVisibility())throw Error('Registration and form suggestions are hidden');
     f.elements.name.value='Allocation test';f.elements.tin.value='111-222-333-000';f.elements.start.value='2025-01-01';
     f.elements.calendar.value='calendar';f.elements.income.value='eight';
     f.elements.compensation.value='no';f.elements.expanded.value='yes';
@@ -218,6 +219,12 @@ module.exports=async function(win,root){
     if(!document.querySelector('#open-data-export')||!document.querySelector('#open-data-import'))throw Error('Selective data transfer controls missing');
     document.querySelector('#open-data-export').click();
     if(!document.querySelectorAll('#data-export-form [name="export-client"]').length||!document.querySelector('#export-year-from')||!document.querySelector('#export-year-to'))throw Error('Export client and year choices missing');
+    if(!document.querySelector('#data-export-form th input[type="checkbox"]#select-all-export-clients'))throw Error('Export select-all checkbox is not in the table header');
+    if([...document.querySelectorAll('#data-export-form tbody tr')].some(row=>!row.querySelector('.client-selection-status')||!row.classList.contains(state.clients.find(c=>c.id===Number(row.querySelector('input').value))?.status==='Pulled out'?'client-selection-pulled':'client-selection-active')))throw Error('Export client service status is missing');
+    document.querySelector('#select-all-export-clients').click();
+    if([...document.querySelectorAll('[name="export-client"]')].some(input=>!input.checked))throw Error('Export Select all failed');
+    document.querySelector('#select-all-export-clients').click();
+    if([...document.querySelectorAll('[name="export-client"]')].some(input=>input.checked))throw Error('Export Clear all failed');
     document.querySelector('#cancel-data-export').click();await new Promise(r=>setTimeout(r,240));
     document.querySelector('#open-data-import').click();
     const exported=await window.taxguardDB.exportDataXlsx(['clients']),fileTransfer=new DataTransfer();
@@ -233,6 +240,12 @@ module.exports=async function(win,root){
       document.querySelector(`.report-card[data-report="${type}"]`).click();
       const setup=document.querySelector('#report-setup-form');
       if(!setup||document.querySelector('.report-modal')?.open)throw Error(`${type} did not open setup first: ${JSON.stringify({setup:!!setup,previewOpen:!!document.querySelector('.report-modal')?.open,dialogs:[...document.querySelectorAll('dialog')].map(d=>({id:d.id,open:d.open,className:d.className}))})}`);
+      if(!setup.querySelector('th input[type="checkbox"]#report-select-all'))throw Error(`${type} select-all checkbox is not in the table header`);
+      if([...setup.querySelectorAll('tbody tr')].some(row=>!row.querySelector('.client-selection-status')||!row.classList.contains(state.clients.find(c=>c.id===Number(row.querySelector('input').value))?.status==='Pulled out'?'client-selection-pulled':'client-selection-active')))throw Error(`${type} client service status is missing`);
+      setup.querySelector('#report-select-all').click();
+      if(setup.querySelector('[name="report-client"]:checked'))throw Error(`${type} Clear all failed`);
+      setup.querySelector('#report-select-all').click();
+      if([...setup.querySelectorAll('[name="report-client"]')].some(input=>!input.checked))throw Error(`${type} Select all failed`);
       setup.querySelector('#report-year-from').value='2025';setup.querySelector('#report-year-to').value='2026';
       setup.querySelectorAll('[name="report-client"]').forEach(input=>input.checked=Number(input.value)===firstClient.id);
       setup.requestSubmit();await new Promise(r=>setTimeout(r,260));
@@ -338,6 +351,7 @@ module.exports=async function(win,root){
     document.querySelector('.pullout-dialog #pullout-form').requestSubmit();
     await new Promise(r=>setTimeout(r,220));
     go('pullout');
+    if(document.querySelector('#crumb')?.textContent!=='PULLOUT'||!document.querySelector('#breadcrumb-clients')||!document.querySelector('.breadcrumb')?.textContent.includes('Client directory'))throw Error('PULLOUT breadcrumb is missing');
     document.querySelector('.client-row[data-client="'+id+'"]').click();
     document.querySelector('#pullin-client').click();
     const sameDay=document.querySelector('.pullin-dialog');
@@ -345,6 +359,8 @@ module.exports=async function(win,root){
     sameDay.querySelector('#pullin-form').requestSubmit();
     await new Promise(r=>setTimeout(r,220));
     if(state.clients.find(c=>c.id===id).status!=='Active'||state.clients.find(c=>c.id===id).serviceHistory.at(-1).restart!==today)throw Error('Same-day pull in did not save');
+    document.querySelector('#breadcrumb-clients').click();
+    if(page!=='clients'||document.querySelector('#crumb')?.textContent!=='Client directory'||document.querySelector('#breadcrumb-clients'))throw Error('PULLOUT breadcrumb did not return to the directory');
   }.toString()+')()');
   console.log('PULLOUT DESKTOP PASS');
   await win.webContents.executeJavaScript('('+function(){
