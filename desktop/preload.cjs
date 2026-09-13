@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('taxguardDB',{
   save:(state,revision)=>call('save',state,revision),
   saveForms:(forms,revision)=>call('forms',forms,revision),
   importRecords:()=>ipcRenderer.invoke('records:import'),
+  saveBackup:()=>ipcRenderer.invoke('backup:save'),
+  restoreBackup:()=>ipcRenderer.invoke('backup:restore'),
   savePdf:(defaultName)=>ipcRenderer.invoke('report:savePdf',defaultName),
   getUsers:()=>call('users:list'),
   saveUser:(userData)=>call('users:save',userData),
@@ -13,5 +15,16 @@ contextBridge.exposeInMainWorld('taxguardDB',{
   getCompanyName:()=>call('company:get'),
   saveCompanyName:(name)=>call('company:save',{name}),
   getCompanyProfile:()=>call('company:profile:get'),
-  saveCompanyProfile:(profile)=>call('company:profile:save',profile)
+  saveCompanyProfile:(profile)=>call('company:profile:save',profile),
+  listClientDocuments:(clientId)=>call('documents:list',{clientId}),
+  saveClientDocument:(documentData)=>call('documents:save',documentData),
+  getClientDocument:(id)=>call('documents:get',{id}),
+  deleteClientDocument:(id)=>call('documents:delete',{id}),
+  importClientsCsv:(text)=>call('clients:import-csv',{text}),
+  importClientsXlsx:(base64)=>ipcRenderer.invoke('clients:import-xlsx',base64),
+  getClientFields:()=>call('clients:fields:get'),
+  saveClientFields:(fields)=>call('clients:fields:save',{fields}),
+  getCalendarRules:()=>call('calendar:list'),
+  saveCalendarRule:(rule)=>call('calendar:save',rule),
+  deleteCalendarRule:(id)=>call('calendar:delete',{id})
 });

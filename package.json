@@ -1,7 +1,7 @@
 {
   "name": "taxguard-desktop",
   "productName": "TaxGuard",
-  "version": "0.7.4",
+  "version": "0.8.0",
   "private": true,
   "main": "desktop/main.cjs",
   "scripts": {
@@ -22,6 +22,8 @@
       "index.html",
       "style.css",
       "app.js",
+      "form-allocation.js",
+      "dialog-dismiss.js",
       "browser-database.js",
       "database-ui.js",
       "desktop/**/*",
@@ -49,5 +51,8 @@
   "devDependencies": {
     "electron": "44.2.0",
     "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0"
   }
 }

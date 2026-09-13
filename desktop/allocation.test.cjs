@@ -5,7 +5,7 @@ const os=require('node:os');
 const path=require('node:path');
 const vm=require('node:vm');
 const {Store}=require('./database.cjs');
-const allocation=require('../database/form-allocation.js');
+const allocation=require('../form-allocation.js');
 const root=path.join(__dirname,'..');
 const catalog=require('../database/default-forms.json');
 const base={id:1,name:'Allocation test',tin:'111-222-333-000',type:'Sole proprietorship',tax:'NVAT',status:'Active',start:'2025-01-01',forms:['2551-Q']};
@@ -96,14 +96,14 @@ test('Year profiles survive reopen, preserve legacy years and reject removal of 
 });
 test('Obligations use the selected year and expanded withholding excludes quarter-end months',()=>{
   const source=fs.readFileSync(path.join(root,'app.js'),'utf8');
-  const code=source.slice(source.indexOf('function due('),source.indexOf("if(!database&&!localStorage"));
+  const code=source.slice(source.indexOf('function baseDue('),source.indexOf("if(!database&&!localStorage"));
   const ctx=vm.createContext({TaxGuardAllocation:allocation,forms:catalog,year:2026,
-    state:{clients:[{...base,yearProfiles:{2026:{...profile,forms:['0619-E'],periods:{'0619-E':allocation.expandedMonths}}}}],filings:{}}});
+    calendarRules:[],state:{clients:[{...base,yearProfiles:{2026:{...profile,forms:['0619-E'],periods:{'0619-E':allocation.expandedMonths}}}}],filings:{}}});
   vm.runInContext(code,ctx);
   const obs=ctx.obligations();
   assert.equal(obs.length,8);
   assert.equal(obs[2].p,'Apr');
-  assert.equal(obs[2].due,'2026-05-10');
+  assert.equal(obs[2].due,'2026-05-11');
   assert.equal(obs[7].p,'Nov');
   ctx.year=2025;
   assert.equal(ctx.obligations().length,4);

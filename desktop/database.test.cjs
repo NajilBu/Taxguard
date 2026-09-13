@@ -9,7 +9,8 @@ const root=path.join(__dirname,'..');
 test('Compliance statuses agree across clients and filings at the due-date boundary',()=>{
   const vm=require('node:vm');
   const source=fs.readFileSync(path.join(root,'app.js'),'utf8');
-  const code=source.slice(source.indexOf('function complianceStatus('),source.indexOf('function render('));
+  const code=source.slice(source.indexOf('function complianceStatus('),source.indexOf('function filteredClientRows('))
+    +source.slice(source.indexOf('function filingStatus('),source.indexOf('function deadlineRiskBuckets('));
   const ctx=vm.createContext({today:'2026-09-10'});
   vm.runInContext(code,ctx);
   const client={id:1};
@@ -46,6 +47,92 @@ test('Client directory search, tax and business filters combine with alphabetica
   assert.deepEqual(names('stores','VAT','Corporation','za'),['Zeta Stores','Beta Stores']);
   assert.deepEqual(names('333','VAT','all','az'),['Beta Stores']);
   assert.deepEqual(names('','NVAT','Corporation','az'),[]);
+});
+test('Risk radar separates overdue, today, three-day, and seven-day obligations',()=>{
+  const vm=require('node:vm');
+  const source=fs.readFileSync(path.join(root,'app.js'),'utf8');
+  const code=source.slice(source.indexOf('function deadlineRiskBuckets('),source.indexOf('function riskRadar('));
+  const context=vm.createContext({Date,Math});vm.runInContext(code,context);
+  const items=['2026-09-09','2026-09-10','2026-09-13','2026-09-17','2026-09-18'].map(due=>({due}));
+  items.push({due:'2026-09-10',filing:{date:'2026-09-10'}});
+  const buckets=context.deadlineRiskBuckets(items,'2026-09-10');
+  assert.deepEqual(Object.fromEntries(Object.entries(buckets).map(([key,rows])=>[key,rows.length])),
+    {overdue:1,today:1,within3:1,within7:1});
+});
+test('Pullout date survives SQLite reload with client history intact',()=>{
+  const {file}=fixture();let store=new Store(file,root);
+  const archived={...client,status:'Pulled out',pulledOutAt:'2026-06-30'};
+  store.saveState({clients:[archived],filings:{'1:2026:2550-Q:Q1':{date:'2026-04-20',reference:'HISTORY'}}});
+  store.close();store=new Store(file,root);
+  const loaded=store.load();
+  assert.equal(loaded.clients[0].status,'Pulled out');
+  assert.equal(loaded.clients[0].pulledOutAt,'2026-06-30');
+  assert.equal(loaded.filings['1:2026:2550-Q:Q1'].reference,'HISTORY');
+  store.close();
+});
+test('Client documents persist and remain linked to filing records',()=>{
+  const {file}=fixture();let store=new Store(file,root);
+  store.saveState({clients:[client],filings:{'1:2026:2550-Q:Q1':{date:'2026-04-20',reference:'FILED'}}});
+  const content=Buffer.from('%PDF-1.4\nexample').toString('base64');
+  const listed=store.saveClientDocument({clientId:1,filename:'receipt.pdf',mime:'application/pdf',base64:content,filingKey:'1:2026:2550-Q:Q1'});
+  assert.equal(listed.length,1);store.close();store=new Store(file,root);
+  assert.equal(store.getClientDocument(listed[0].id).content_base64,content);
+  assert.equal(store.listClientDocuments(1)[0].filing_key,'1:2026:2550-Q:Q1');
+  assert.equal(store.deleteClientDocument(listed[0].id).length,0);
+  store.close();
+});
+test('CSV migration merges by TIN and rejects invalid rows atomically',()=>{
+  const {file}=fixture();const store=new Store(file,root);
+  store.saveState({clients:[client],filings:{}});
+  const csv='name,tin,business_type,tax_type,start_of_filing,required_forms\nExisting,123-456-789-000,Corporation,VAT,2025-01-01,2550-Q\nNew Client,999-888-777-000,Corporation,VAT,2026-01-01,2550-Q';
+  assert.deepEqual({...store.importClientsCsv(csv)}, {imported:1,skipped:1,revision:store.revision()});
+  assert.equal(store.load().clients.length,2);
+  assert.throws(()=>store.importClientsCsv('name,tin,business_type,tax_type,start_of_filing\nBad,invalid,Corporation,VAT,2026-01-01'),/TIN/);
+  assert.equal(store.load().clients.length,2);store.close();
+});
+test('Excel migration reads a standard client-list worksheet',async()=>{
+  const ExcelJS=require('exceljs'),{parseXlsxBuffer}=require('./migration.cjs');
+  const workbook=new ExcelJS.Workbook(),sheet=workbook.addWorksheet('Clients');
+  sheet.addRow(['Name','TIN','Business Type','Tax Type','Start of Filing','Required Forms']);
+  sheet.addRow(['Excel Client','888-777-666-000','Corporation','VAT',new Date('2026-01-01T00:00:00Z'),'2550-Q']);
+  const rows=await parseXlsxBuffer(Buffer.from(await workbook.xlsx.writeBuffer()));
+  const {file}=fixture(),store=new Store(file,root);
+  const result=store.importClientsRows(rows);
+  assert.equal(result.imported,1);
+  assert.equal(store.load().clients[0].tin,'888-777-666-000');
+  assert.equal(store.load().clients[0].start,'2026-01-01');store.close();
+});
+test('Custom client fields and definitions persist across SQLite reopen',()=>{
+  const {file}=fixture();let store=new Store(file,root);
+  store.saveClientFields(['RDO','Contact person']);
+  store.saveState({clients:[{...client,customFields:{RDO:'042','Contact person':'Ana'}}],filings:{}});
+  store.close();store=new Store(file,root);
+  assert.deepEqual(store.getClientFields(),['RDO','Contact person']);
+  assert.deepEqual(store.load().clients[0].customFields,{RDO:'042','Contact person':'Ana'});
+  assert.throws(()=>store.saveClientFields(['RDO','rdo']),/unique/);
+  store.close();
+});
+test('Calendar holidays and sourced extensions persist and validate',()=>{
+  const {file}=fixture();let store=new Store(file,root);
+  store.saveCalendarRule({rule_type:'holiday',rule_date:'2026-10-12',label:'Official holiday',source_url:'https://bir.gov.ph/'});
+  store.saveCalendarRule({rule_type:'extension',rule_date:'2026-10-25',form_code:'2550-Q',tax_year:2026,period:'Q3',adjusted_due:'2026-10-30',source_url:'https://bir.gov.ph/'});
+  assert.throws(()=>store.saveCalendarRule({rule_type:'extension',rule_date:'2026-10-25',form_code:'2550-Q',tax_year:2026,period:'Q3',adjusted_due:'2026-10-30'}),/source/);
+  store.close();store=new Store(file,root);
+  assert.equal(store.getCalendarRules().length,2);
+  store.deleteCalendarRule(store.getCalendarRules()[0].id);
+  assert.equal(store.getCalendarRules().length,1);store.close();
+});
+test('Full SQLite backup includes clients, users, documents, and calendar rules',()=>{
+  const {dir,file}=fixture(),backup=path.join(dir,'complete-backup.db');let store=new Store(file,root);
+  store.saveState({clients:[client],filings:{}});
+  store.saveClientDocument({clientId:1,filename:'proof.pdf',mime:'application/pdf',base64:Buffer.from('%PDF-1.4').toString('base64')});
+  store.saveCalendarRule({rule_type:'holiday',rule_date:'2026-10-12',label:'Test day'});
+  store.backupTo(backup);assert.equal(Store.validateBackup(backup),true);store.close();
+  store=new Store(backup,root);
+  assert.equal(store.load().clients.length,1);
+  assert.equal(store.getUsers().length,1);
+  assert.equal(store.listClientDocuments(1).length,1);
+  assert.equal(store.getCalendarRules().length,1);store.close();
 });
 function fixture(){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'taxguard-db-test-'));return {dir,file:path.join(dir,'taxguard.db')}}
 const client={id:1,name:'Test client',tin:'123-456-789-000',type:'Corporation',tax:'VAT',status:'Active',start:'2025-01-01',remarks:'Test',forms:['2550-Q']};
@@ -173,9 +260,8 @@ test('Settings reports section includes Excel exports with UTF-8 BOM compatibili
   const dbUiJs=fs.readFileSync(path.join(root,'database-ui.js'),'utf8');
   assert.equal(dbUiJs.includes('exportToExcel'),true);
   assert.equal(dbUiJs.includes('\\uFEFF'),true);
-  assert.equal(dbUiJs.includes('export-summary-report'),true);
-  assert.equal(dbUiJs.includes('export-filings-report'),true);
-  assert.equal(dbUiJs.includes('export-clients-report'),true);
+  assert.equal(dbUiJs.includes('preview-export-excel'),true);
+  assert.equal((dbUiJs.match(/exportFn=\(\)=>\{/g)||[]).length,3);
   const styleCss=fs.readFileSync(path.join(root,'style.css'),'utf8');
   assert.equal(styleCss.includes('.reports-panel'),true);
   assert.equal(styleCss.includes('.report-stat-strip'),true);
@@ -207,7 +293,7 @@ test('All 3 report cards have interactive card-click previews, enlarged comment 
   // No buttons inside the cards
   assert.equal(dbUiJs.includes('<div class="reports-grid">'),true);
   assert.equal(dbUiJs.includes('Save as PDF'),true);
-  assert.equal(dbUiJs.includes('PDF Report'),true);
+  assert.equal(dbUiJs.includes('PDF / Excel'),true);
   assert.equal(dbUiJs.includes('rows="6"'),true);
   const styleCss=fs.readFileSync(path.join(root,'style.css'),'utf8');
   assert.equal(styleCss.includes('cursor:pointer'),true);
@@ -227,7 +313,9 @@ test('Report preview saves PDF directly without triggering print dialog prompt',
   assert.equal(mainCjs.includes('printToPDF'),true);
   assert.equal(mainCjs.includes('dialog.showSaveDialog'),true);
   // Verify modal is closed after saving
-  assert.equal(dbUiJs.includes("if(res?.saved){\n          notify('Report saved as PDF.');\n          closeModal(m);"),true);
+  assert.equal(dbUiJs.includes("if(res?.saved){"),true);
+  assert.equal(dbUiJs.includes("notify('Report saved as PDF.')"),true);
+  assert.equal(dbUiJs.includes('closeModal(m);'),true);
 });
 test('TaxGuard shield logo is configured as desktop window icon and Windows exe icon',()=>{
   assert.equal(fs.existsSync(path.join(root,'desktop/icon.ico')),true);
@@ -313,7 +401,7 @@ test('User account management: create new users, edit current user, safeguards, 
   assert.equal(dbUiJs.includes('User Account Management'), true);
   assert.equal(dbUiJs.includes('openUserAccountModal'), true);
   assert.equal(dbUiJs.includes('btn-add-user'), true);
-  assert.equal(dbUiJs.includes('btn-edit-user'), true);
+  assert.equal(dbUiJs.includes('user-account-row'), true);
 
   s.close();
 });

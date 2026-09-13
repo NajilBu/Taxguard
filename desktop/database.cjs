@@ -2,6 +2,7 @@ const { DatabaseSync } = require('node:sqlite');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const {parseCsv}=require('./migration.cjs');
 
 function hashPassword(password) {
   return crypto.createHash('sha256').update(String(password)).digest('hex');
@@ -30,6 +31,10 @@ class Store {
     this.db.exec(fs.readFileSync(path.join(root,'database/schema.sql'),'utf8'));
     if(!this.db.prepare('PRAGMA table_info(users)').all().some(c=>c.name==='profile_photo'))
       this.db.exec("ALTER TABLE users ADD COLUMN profile_photo TEXT NOT NULL DEFAULT ''");
+    if(!this.db.prepare('PRAGMA table_info(clients)').all().some(c=>c.name==='pulled_out_at'))
+      this.db.exec('ALTER TABLE clients ADD COLUMN pulled_out_at TEXT');
+    if(!this.db.prepare('PRAGMA table_info(clients)').all().some(c=>c.name==='custom_fields_json'))
+      this.db.exec("ALTER TABLE clients ADD COLUMN custom_fields_json TEXT NOT NULL DEFAULT '{}'");
     const cols=this.db.prepare('PRAGMA table_info(forms)').all();
     if(!cols.some(c=>c.name==='schedule_json')) this.db.exec("ALTER TABLE forms ADD COLUMN schedule_json TEXT NOT NULL DEFAULT '{}'");
     this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS unique_client_deadline ON filings(client_id,deadline_id); PRAGMA user_version=1;');
@@ -54,7 +59,7 @@ class Store {
   }
   load() {
     const forms=this.db.prepare('SELECT * FROM forms ORDER BY id').all().map(f=>({...JSON.parse(f.schedule_json),id:f.code,name:f.name,frequency:f.frequency}));
-    const clients=this.db.prepare('SELECT * FROM clients ORDER BY id').all().map(c=>({id:c.id,name:c.name,tin:c.tin,type:c.business_type,tax:c.tax_type,status:c.status,start:c.start_of_filing,remarks:c.remarks,forms:this.db.prepare('SELECT f.code FROM client_forms cf JOIN forms f ON f.id=cf.form_id WHERE cf.client_id=?').all(c.id).map(f=>f.code)}));
+    const clients=this.db.prepare('SELECT * FROM clients ORDER BY id').all().map(c=>({id:c.id,name:c.name,tin:c.tin,type:c.business_type,tax:c.tax_type,status:c.status,start:c.start_of_filing,pulledOutAt:c.pulled_out_at||undefined,customFields:JSON.parse(c.custom_fields_json||'{}'),remarks:c.remarks,forms:this.db.prepare('SELECT f.code FROM client_forms cf JOIN forms f ON f.id=cf.form_id WHERE cf.client_id=?').all(c.id).map(f=>f.code)}));
     for(const c of clients){
       const profiles=this.db.prepare('SELECT tax_year,profile_json FROM client_year_profiles WHERE client_id=?').all(c.id);
       if(profiles.length)c.yearProfiles=Object.fromEntries(profiles.map(p=>[p.tax_year,JSON.parse(p.profile_json)]));
@@ -100,9 +105,11 @@ class Store {
         required(c.name,'Client name');
         if(!/^\d{3}-\d{3}-\d{3}-\d{3}$/.test(c.tin)||tins.has(c.tin))throw Error('TIN must be unique and use 000-000-000-000.');tins.add(c.tin);
         if(!date(c.start))throw Error('Invalid filing start date.');
-        if(!['Active','Inactive','Closed','For closure'].includes(c.status))throw Error('Invalid client status.');
+        if(!['Active','Inactive','Closed','For closure','Pulled out'].includes(c.status))throw Error('Invalid client status.');
+        if(c.status==='Pulled out'&&(!date(c.pulledOutAt)||c.pulledOutAt<c.start))throw Error('Pullout date must be on or after the start of filing.');
+        if(c.customFields!==undefined&&(!c.customFields||typeof c.customFields!=='object'||Array.isArray(c.customFields)||Object.keys(c.customFields).length>30||Object.entries(c.customFields).some(([key,value])=>key.length>80||typeof value!=='string'||value.length>1000)))throw Error('Invalid custom client fields.');
         required(c.type,'Business type');
-        this.db.prepare('INSERT INTO clients(id,name,tin,business_type,tax_type,status,start_of_filing,remarks) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,tin=excluded.tin,business_type=excluded.business_type,tax_type=excluded.tax_type,status=excluded.status,start_of_filing=excluded.start_of_filing,remarks=excluded.remarks').run(c.id,c.name.trim(),c.tin,c.type,c.tax,c.status,c.start,c.remarks||'');
+        this.db.prepare('INSERT INTO clients(id,name,tin,business_type,tax_type,status,start_of_filing,remarks,pulled_out_at,custom_fields_json) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,tin=excluded.tin,business_type=excluded.business_type,tax_type=excluded.tax_type,status=excluded.status,start_of_filing=excluded.start_of_filing,remarks=excluded.remarks,pulled_out_at=excluded.pulled_out_at,custom_fields_json=excluded.custom_fields_json').run(c.id,c.name.trim(),c.tin,c.type,c.tax,c.status,c.start,c.remarks||'',c.status==='Pulled out'?c.pulledOutAt:null,JSON.stringify(c.customFields||{}));
         if(!Array.isArray(c.forms))throw Error('Invalid required forms.');
         this.db.prepare('DELETE FROM client_forms WHERE client_id=?').run(c.id);
         for(const code of new Set(c.forms)){const f=this.db.prepare('SELECT id FROM forms WHERE code=?').get(code);if(!f)throw Error(`Unknown required form: ${code}`);this.db.prepare('INSERT INTO client_forms VALUES(?,?)').run(c.id,f.id);}
@@ -172,6 +179,16 @@ class Store {
       ||'EOO Tax & Accounting';
     const logo=this.db.prepare("SELECT value FROM workspace_meta WHERE key='company_logo'").get()?.value||'';
     return {name,logo};
+  }
+  getClientFields(){
+    return JSON.parse(this.db.prepare("SELECT value FROM workspace_meta WHERE key='client_fields'").get()?.value||'[]');
+  }
+  saveClientFields(fields){
+    if(!Array.isArray(fields)||fields.length>10||fields.some(field=>typeof field!=='string'||!field.trim()||field.trim().length>50))throw Error('Use up to 10 client fields with names under 50 characters.');
+    const clean=fields.map(field=>field.trim());
+    if(new Set(clean.map(field=>field.toLowerCase())).size!==clean.length)throw Error('Client field names must be unique.');
+    this.db.prepare("INSERT INTO workspace_meta(key,value) VALUES('client_fields',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(clean));
+    return clean;
   }
   saveCompanyName(value){
     return this.saveCompanyProfile({name:value,logo:this.getCompanyProfile().logo}).name;
@@ -270,6 +287,97 @@ class Store {
     this.db.exec('SAVEPOINT import_workspace');
     try{this.saveForms(data.forms);this.saveState(data.state);this.db.exec('RELEASE import_workspace');}catch(e){this.db.exec('ROLLBACK TO import_workspace; RELEASE import_workspace');throw e;}
     return this.load();
+  }
+  importClientsCsv(text){
+    return this.importClientsRows(parseCsv(text));
+  }
+  importClientsRows(rows){
+    if(!Array.isArray(rows)||rows.length>50000)throw Error('Invalid client import rows.');
+    const snapshot=this.load();
+    const knownTins=new Set(snapshot.clients.map(client=>client.tin));
+    const formCodes=new Set(snapshot.forms.map(form=>form.id));
+    let nextId=Math.max(0,...snapshot.clients.map(client=>client.id))+1,skipped=0;
+    const additions=[];
+    for(const [index,row] of rows.entries()){
+      const tin=row.tin;
+      if(knownTins.has(tin)){skipped++;continue;}
+      knownTins.add(tin);
+      const forms=(row.required_forms||row.forms||'').split(/[;|]/).map(value=>value.trim()).filter(Boolean);
+      if(forms.some(code=>!formCodes.has(code)))throw Error(`CSV row ${index+2} contains an unknown form.`);
+      additions.push({id:nextId++,name:row.name,tin,type:row.business_type||row.type||'',tax:row.tax_type||row.tax||'',status:row.status||'Active',start:row.start_of_filing||row.start||'',remarks:row.remarks||'',forms});
+    }
+    if(additions.length)this.saveState({clients:[...snapshot.clients,...additions],filings:snapshot.filings},snapshot.revision);
+    return {imported:additions.length,skipped,revision:this.revision()};
+  }
+  getCalendarRules(){
+    return this.db.prepare('SELECT id,rule_type,rule_date,label,form_code,tax_year,period,adjusted_due,source_url FROM calendar_rules ORDER BY rule_date,id').all();
+  }
+  saveCalendarRule(rule){
+    if(!rule||!['holiday','extension'].includes(rule.rule_type))throw Error('Choose a calendar rule type.');
+    const ruleDate=required(rule.rule_date,'Rule date');
+    if(!date(ruleDate))throw Error('Invalid calendar date.');
+    const label=String(rule.label||'').trim(),source=String(rule.source_url||'').trim();
+    if(label.length>200||source.length>500||(source&&!/^https:\/\//i.test(source)))throw Error('Use a short label and an HTTPS source link.');
+    const code=String(rule.form_code||'').trim(),period=String(rule.period||'').trim(),taxYear=Number(rule.tax_year||0),adjusted=String(rule.adjusted_due||'');
+    if(rule.rule_type==='extension'){
+      const form=this.db.prepare('SELECT schedule_json FROM forms WHERE code=?').get(code);
+      if(!form||!JSON.parse(form.schedule_json).periods.includes(period)||!Number.isInteger(taxYear)||taxYear<1000||taxYear>9998||!date(adjusted)||adjusted<ruleDate)throw Error('Choose a valid form, period, year, and extended due date.');
+      if(!source)throw Error('A circular or announcement source link is required for an extension.');
+    }
+    this.db.prepare('INSERT INTO calendar_rules(rule_type,rule_date,label,form_code,tax_year,period,adjusted_due,source_url) VALUES(?,?,?,?,?,?,?,?)').run(rule.rule_type,ruleDate,label,rule.rule_type==='extension'?code:'',rule.rule_type==='extension'?taxYear:0,rule.rule_type==='extension'?period:'',rule.rule_type==='extension'?adjusted:'',source);
+    return this.getCalendarRules();
+  }
+  deleteCalendarRule(id){
+    const num=Number(id);if(!Number.isSafeInteger(num)||num<=0)throw Error('Invalid calendar rule ID.');
+    this.db.prepare('DELETE FROM calendar_rules WHERE id=?').run(num);
+    return this.getCalendarRules();
+  }
+  backupTo(target){
+    if(typeof target!=='string'||!target)throw Error('Choose a backup file.');
+    const temporary=target+'.partial-'+process.pid;
+    try{
+      this.db.exec("VACUUM INTO '"+temporary.replace(/'/g,"''")+"'");
+      fs.copyFileSync(temporary,target);
+      return target;
+    }finally{try{fs.unlinkSync(temporary)}catch{}}
+  }
+  static validateBackup(filename){
+    const candidate=new DatabaseSync(filename,{readOnly:true});
+    try{
+      if(candidate.prepare('PRAGMA integrity_check').get().integrity_check!=='ok')throw Error('Backup failed SQLite integrity check.');
+      for(const name of ['clients','forms','filings','users','workspace_meta']){
+        if(!candidate.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name))throw Error('Backup is missing '+name+'.');
+      }
+    }finally{candidate.close();}
+    return true;
+  }
+  listClientDocuments(clientId){
+    const id=Number(clientId);
+    if(!Number.isSafeInteger(id)||id<=0)throw Error('Invalid client ID.');
+    return this.db.prepare('SELECT id,client_id,filing_key,filename,mime_type,created_at FROM client_documents WHERE client_id=? ORDER BY created_at DESC,id DESC').all(id);
+  }
+  saveClientDocument(data){
+    const clientId=Number(data?.clientId),filename=required(data?.filename,'Document filename');
+    if(!Number.isSafeInteger(clientId)||clientId<=0||!this.db.prepare('SELECT id FROM clients WHERE id=?').get(clientId))throw Error('Client not found.');
+    if(filename.length>200||/[\\/\x00-\x1f]/.test(filename))throw Error('Invalid document filename.');
+    const mime=String(data?.mime||'');
+    if(!['application/pdf','image/png','image/jpeg','image/webp'].includes(mime))throw Error('Choose a PDF, PNG, JPEG, or WebP file.');
+    const content=String(data?.base64||'');
+    if(!/^[A-Za-z0-9+/]+={0,2}$/.test(content)||content.length>7*1024*1024||Buffer.from(content,'base64').length>5*1024*1024)throw Error('Document must be 5 MB or less.');
+    const filingKey=String(data?.filingKey||'');
+    if(filingKey&&(!filingKey.startsWith(clientId+':')||!/^\d+:\d{4}:[A-Za-z0-9() ._-]+:[A-Za-z0-9 _-]+$/.test(filingKey)))throw Error('Invalid filing association.');
+    this.db.prepare('INSERT INTO client_documents(client_id,filing_key,filename,mime_type,content_base64) VALUES(?,?,?,?,?)').run(clientId,filingKey,filename,mime,content);
+    return this.listClientDocuments(clientId);
+  }
+  getClientDocument(id){
+    const value=this.db.prepare('SELECT id,client_id,filing_key,filename,mime_type,content_base64,created_at FROM client_documents WHERE id=?').get(Number(id));
+    if(!value)throw Error('Document not found.');
+    return value;
+  }
+  deleteClientDocument(id){
+    const value=this.getClientDocument(id);
+    this.db.prepare('DELETE FROM client_documents WHERE id=?').run(value.id);
+    return this.listClientDocuments(value.client_id);
   }
   close(){this.db.close()}
 }

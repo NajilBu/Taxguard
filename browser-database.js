@@ -20,7 +20,18 @@
     saveUser:(userData)=>call('users:save',userData),
     deleteUser:(id)=>call('users:delete',{id}),
     getCompanyProfile:()=>call('company:profile:get'),
-    saveCompanyProfile:(profile)=>call('company:profile:save',profile)
+    saveCompanyProfile:(profile)=>call('company:profile:save',profile),
+    listClientDocuments:(clientId)=>call('documents:list',{clientId}),
+    saveClientDocument:(documentData)=>call('documents:save',documentData),
+    getClientDocument:(id)=>call('documents:get',{id}),
+    deleteClientDocument:(id)=>call('documents:delete',{id}),
+    importClientsCsv:(text)=>call('clients:import-csv',{text}),
+    importClientsXlsx:(base64)=>call('clients:import-xlsx',{base64}),
+    getClientFields:()=>call('clients:fields:get'),
+    saveClientFields:(fields)=>call('clients:fields:save',{fields}),
+    getCalendarRules:()=>call('calendar:list'),
+    saveCalendarRule:(rule)=>call('calendar:save',rule),
+    deleteCalendarRule:(id)=>call('calendar:delete',{id})
   };
   try{window.taxguardDB.load();}catch(error){
     document.querySelector('#content').textContent=error.message;

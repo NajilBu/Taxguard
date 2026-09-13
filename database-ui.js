@@ -564,6 +564,7 @@ function openReportPreview(reportType,reportYear){
         <small>${reportSub}</small>
       </div>
       <div class="preview-toolbar-actions">
+        <button type="button" class="btn secondary" id="preview-export-excel">Export to Excel</button>
         <button type="button" class="btn primary" id="preview-save-pdf"><span>💾 Save as PDF</span></button>
         <button type="button" class="btn" id="preview-close">✕ Close</button>
       </div>
@@ -632,6 +633,7 @@ function openReportPreview(reportType,reportYear){
   }
 
   m.querySelector('#preview-close')?.addEventListener('click',()=>closeModal(m));
+  m.querySelector('#preview-export-excel')?.addEventListener('click',exportFn);
   m.querySelector('#preview-save-pdf')?.addEventListener('click',async()=>{
     const cleanName=reportTitle.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'');
     const pdfFilename=`${cleanName}-${y}.pdf`;
@@ -668,6 +670,65 @@ function getCurrentUserAuth(){
   }catch{
     return {username:'admin',company:'EOO Tax & Accounting',role:'Admin'};
   }
+}
+
+function openClientDocuments(clientId,parent){
+  if(!window.taxguardDB?.listClientDocuments){notify('Document storage requires SQLite.');return;}
+  const client=state.clients.find(c=>c.id===clientId);
+  if(!client)return;
+  const dialog=document.createElement('dialog');dialog.className='client-documents-dialog';
+  const filingKeys=Object.keys(state.filings).filter(key=>key.startsWith(clientId+':')).sort().reverse();
+  const renderDocuments=()=>{
+    const documents=window.taxguardDB.listClientDocuments(clientId);
+    dialog.innerHTML=`<h2>${esc(client.name)} — Documents</h2><p>Store filing receipts and supporting PDF or image files with this client. Maximum 5 MB per file.</p>
+      <form id="document-upload-form"><label for="document-filing-key">Related filing</label><select id="document-filing-key"><option value="">General client document</option>${filingKeys.map(key=>`<option value="${esc(key)}">${esc(key.split(':').slice(1).join(' · '))}</option>`).join('')}</select><label for="client-document-file">Choose document</label><input id="client-document-file" type="file" accept="application/pdf,image/png,image/jpeg,image/webp,.pdf,.png,.jpg,.jpeg,.webp" required><div class="modal-actions"><button class="btn primary">Add document</button></div></form>
+      <div class="table-scroll"><table><thead><tr><th>File</th><th>Filing</th><th>Added</th><th></th></tr></thead><tbody>${documents.map(doc=>`<tr><td>${esc(doc.filename)}</td><td>${esc(doc.filing_key?doc.filing_key.split(':').slice(1).join(' · '):'General')}</td><td>${esc(doc.created_at)}</td><td><button type="button" class="link" data-document-download="${doc.id}">Download</button> <button type="button" class="link" data-document-delete="${doc.id}">Delete</button></td></tr>`).join('')||'<tr><td colspan="4" class="empty">No documents stored.</td></tr>'}</tbody></table></div><div class="modal-actions"><button type="button" class="btn" id="close-documents">Back</button></div>`;
+    dialog.querySelector('#close-documents').onclick=()=>dialog.close();
+    dialog.querySelector('#document-upload-form').onsubmit=async event=>{
+      event.preventDefault();const file=dialog.querySelector('#client-document-file').files[0];
+      if(!file)return;
+      if(file.size>5*1024*1024){notify('Document must be 5 MB or less.');return;}
+      if(!['application/pdf','image/png','image/jpeg','image/webp'].includes(file.type)){notify('Choose a PDF, PNG, JPEG, or WebP file.');return;}
+      try{
+        const base64=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(Error('Could not read document.'));reader.readAsDataURL(file);});
+        window.taxguardDB.saveClientDocument({clientId,filename:file.name,mime:file.type,base64,filingKey:dialog.querySelector('#document-filing-key').value});
+        renderDocuments();notify('Document saved.');
+      }catch(error){notify('Document not saved: '+error.message);}
+    };
+    dialog.querySelectorAll('[data-document-download]').forEach(button=>button.onclick=()=>{
+      try{
+        const doc=window.taxguardDB.getClientDocument(Number(button.dataset.documentDownload));
+        const bytes=Uint8Array.from(atob(doc.content_base64),c=>c.charCodeAt(0));
+        const url=URL.createObjectURL(new Blob([bytes],{type:doc.mime_type}));
+        const link=document.createElement('a');link.href=url;link.download=doc.filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
+      }catch(error){notify('Download failed: '+error.message);}
+    });
+    dialog.querySelectorAll('[data-document-delete]').forEach(button=>button.onclick=()=>{
+      const confirm=document.createElement('dialog');confirm.innerHTML='<h2>Delete document?</h2><p>This removes the stored copy.</p><div class="modal-actions"><button type="button" class="btn" id="keep-document">Keep</button><button type="button" class="btn primary" id="confirm-document-delete">Delete</button></div>';
+      document.body.append(confirm);const close=()=>{confirm.close();confirm.remove();};
+      confirm.querySelector('#keep-document').onclick=close;
+      confirm.querySelector('#confirm-document-delete').onclick=()=>{try{window.taxguardDB.deleteClientDocument(Number(button.dataset.documentDelete));close();renderDocuments();notify('Document deleted.');}catch(error){notify('Delete failed: '+error.message);}};
+      confirm.showModal();
+    });
+  };
+  renderDocuments();document.body.append(dialog);
+  const parentClosed=()=>{if(dialog.open)dialog.close();};
+  parent?.addEventListener('close',parentClosed,{once:true});
+  dialog.addEventListener('close',()=>{parent?.removeEventListener('close',parentClosed);dialog.remove();},{once:true});
+  dialog.showModal();
+}
+function persistCustomClientFields(fields){
+  if(database?.saveClientFields)customClientFields=database.saveClientFields(fields);
+  else{
+    const clean=fields.map(field=>field.trim());
+    if(clean.length>10||clean.some(field=>!field||field.length>50)||new Set(clean.map(field=>field.toLowerCase())).size!==clean.length)throw Error('Use up to 10 uniquely named client fields.');
+    customClientFields=clean;localStorage.setItem('taxguard-client-fields',JSON.stringify(clean));
+  }
+  render();
+}
+function backupSettingsPanel(){
+  if(!database?.saveBackup)return '';
+  return `<div class="panel backup-panel" style="margin-top:24px"><div class="panel-head"><div><h2>Backup &amp; restore</h2><p>The desktop app saves a daily SQLite backup on launch. You can also save a complete copy of clients, filings, users, documents, company profile, and calendar adjustments.</p></div></div><div class="panel-body storage-actions"><button type="button" class="btn primary" id="save-full-backup">Save backup</button><button type="button" class="btn secondary" id="restore-full-backup">Restore backup</button></div></div>`;
 }
 function userPhotoMarkup(username,photo){
   return typeof photo==='string'&&/^data:image\/(png|jpeg|webp);base64,[a-zA-Z0-9+/]+={0,2}$/.test(photo)
@@ -1177,15 +1238,16 @@ settings=function(){
         </form>
       </div>
     </div>
+    <div class="panel custom-fields-panel" style="margin-bottom:24px"><div class="panel-head"><div><h2>Client list fields</h2><p>Add text fields that appear in client records and the directory.</p></div></div><div class="panel-body"><div class="selected-pills">${customClientFields.map(field=>`<span class="form-pill">${esc(field)} <button type="button" data-remove-client-field="${esc(field)}" aria-label="Remove ${esc(field)}">×</button></span>`).join('')||'<span class="subtle">No custom fields.</span>'}</div><form id="add-client-field-form" class="storage-actions"><input id="new-client-field" maxlength="50" required placeholder="Field name, e.g. RDO"><button class="btn secondary">Add field</button></form></div></div>
     <div class="settings-grid">
       <div class="panel settings-panel">
         <div class="panel-head"><div><h2>Color theme</h2><p>Choose a preset workspace accent color.</p></div></div>
         <div class="theme-options">${[['blue','Blue'],['navy','Navy'],['green','Green'],['purple','Purple'],['orange','Orange'],['red','Red']].map(([v,l])=>`<button class="theme-option ${current===v?'active':''}" data-theme="${v}"><span class="theme-swatch ${v}"></span><span>${l}</span>${current===v?'<b>✓</b>':''}</button>`).join('')}</div>
       </div>
-      <div class="panel storage-panel"><div class="panel-head"><div><h2>Data storage</h2><p>${database?'Client records and filings are saved in SQLite, shared by localhost and the desktop app.':'Records are saved in this browser.'}</p></div></div><div class="panel-body storage-actions"><button type="button" class="btn secondary" id="export-records">Export records</button>${database?.importRecords&&state.clients.length===0?'<button type="button" class="btn secondary" id="import-records">Import browser records</button>':''}</div></div>
+      <div class="panel storage-panel"><div class="panel-head"><div><h2>Data storage</h2><p>${database?'Client records and filings are saved in SQLite, shared by localhost and the desktop app.':'Records are saved in this browser.'}</p></div></div><div class="panel-body storage-actions"><button type="button" class="btn secondary" id="export-records">Export records</button>${database?.importClientsCsv?'<button type="button" class="btn secondary" id="import-clients-csv">Import clients from CSV or Excel</button><input type="file" id="clients-csv-input" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>':''}${database?.importRecords&&state.clients.length===0?'<button type="button" class="btn secondary" id="import-records">Import browser records</button>':''}</div></div>
     </div>
     <div class="panel users-panel" style="margin-top:24px"><div class="panel-head"><div><h2>User Account Management</h2><p>Manage workstation accounts.</p></div><button type="button" class="btn primary" id="btn-add-user">+ Add user account</button></div><div class="panel-body" style="padding:0"><div class="table-scroll"><table><thead><tr><th>User account</th><th>Firm / display name</th><th>Role</th><th>Status</th></tr></thead><tbody>${usersRowsHtml}</tbody></table></div></div></div>
-    <div class="panel reports-panel" style="margin-top:24px"><div class="panel-head"><div><h2>Compliance &amp; Audit Reports</h2><p>Click any report card below to open its executive preview with visual charts, custom commentary, and PDF export.</p></div><span class="subtle">${year} TAX YEAR</span></div><div class="panel-body"><div class="report-stat-strip"><div class="report-stat-card"><small>Total obligations (${year})</small><strong>${obs.length}</strong></div><div class="report-stat-card"><small>Filings completed</small><strong style="color:var(--green)">${done}</strong></div><div class="report-stat-card"><small>Compliance rate</small><strong>${pct}%</strong></div><div class="report-stat-card"><small>Overdue items</small><strong style="color:${over>0?'#c36959':'var(--ink)'}">${over}</strong></div></div><div class="reports-grid"><div class="report-card" id="open-report-preview" data-report="summary" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📊</span><div><strong>Annual Compliance Summary</strong><small>Client compliance standing, completion percentage, and obligation counts for ${year}.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; save PDF &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF Report</span></div></div><div class="report-card" id="export-filings-report" data-report="filings" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📑</span><div><strong>Filing Audit Log</strong><small>Detailed submission trail with BIR confirmation numbers, filing dates, and periods.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; save PDF &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF Report</span></div></div><div class="report-card" id="export-clients-report" data-report="clients" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">👥</span><div><strong>Client Master Roster</strong><small>Complete directory of registered taxpayers, TINs, tax types, and required BIR forms.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; save PDF &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF Report</span></div></div></div></div></div>`;
+    <div class="panel reports-panel" style="margin-top:24px"><div class="panel-head"><div><h2>Compliance &amp; Audit Reports</h2><p>Click any report card below to open its executive preview with visual charts, custom commentary, and PDF or Excel export.</p></div><span class="subtle">${year} TAX YEAR</span></div><div class="panel-body"><div class="report-stat-strip"><div class="report-stat-card"><small>Total obligations (${year})</small><strong>${obs.length}</strong></div><div class="report-stat-card"><small>Filings completed</small><strong style="color:var(--green)">${done}</strong></div><div class="report-stat-card"><small>Compliance rate</small><strong>${pct}%</strong></div><div class="report-stat-card"><small>Overdue items</small><strong style="color:${over>0?'#c36959':'var(--ink)'}">${over}</strong></div></div><div class="reports-grid"><div class="report-card" id="open-report-preview" data-report="summary" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📊</span><div><strong>Annual Compliance Summary</strong><small>Client compliance standing, completion percentage, and obligation counts for ${year}.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; export &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF / Excel</span></div></div><div class="report-card" id="export-filings-report" data-report="filings" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📑</span><div><strong>Filing Audit Log</strong><small>Detailed submission trail with BIR confirmation numbers, filing dates, and periods.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; export &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF / Excel</span></div></div><div class="report-card" id="export-clients-report" data-report="clients" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">👥</span><div><strong>Client Master Roster</strong><small>Complete directory of registered taxpayers, TINs, tax types, and required BIR forms.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; export &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF / Excel</span></div></div></div></div></div>${backupSettingsPanel()}`;
 };
 document.querySelector('footer span').textContent=database?'Saved to SQLite on this computer':'Changes saved in this browser';
 document.addEventListener('click',async e=>{
@@ -1225,12 +1287,38 @@ document.addEventListener('click',async e=>{
   if(e.target.closest('#import-records')){
     try{const result=await database.importRecords();if(result){restoreDatabase();render();notify('Browser records imported into SQLite.');}}catch(error){notify('Import failed: '+error.message);}
   }
+  const removeField=e.target.closest('[data-remove-client-field]');
+  if(removeField){
+    try{persistCustomClientFields(customClientFields.filter(field=>field!==removeField.dataset.removeClientField));notify('Client field hidden; saved values are retained.');}catch(error){notify('Field not changed: '+error.message);}
+  }
+  if(e.target.closest('#import-clients-csv'))document.querySelector('#clients-csv-input')?.click();
+  if(e.target.closest('#save-full-backup')){
+    try{const result=await database.saveBackup();if(result?.saved)notify('Complete backup saved.');}catch(error){notify('Backup failed: '+error.message);}
+  }
+  if(e.target.closest('#restore-full-backup')){
+    try{await database.restoreBackup();}catch(error){notify('Restore failed: '+error.message);}
+  }
   const reportCard=e.target.closest('.report-card[data-report]');
   if(reportCard){
     openReportPreview(reportCard.dataset.report,year);
   }
 });
-document.addEventListener('change',e=>{
+document.addEventListener('change',async e=>{
+  if(e.target.id==='clients-csv-input'){
+    const file=e.target.files?.[0];if(!file)return;
+    try{
+      const extension=file.name.split('.').pop()?.toLowerCase();
+      let result;
+      if(extension==='csv')result=database.importClientsCsv(await file.text());
+      else if(extension==='xlsx'){
+        if(file.size>5*1024*1024)throw Error('Excel file exceeds 5 MB.');
+        const base64=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(Error('Could not read Excel file.'));reader.readAsDataURL(file);});
+        result=await database.importClientsXlsx(base64);
+      }else throw Error('Choose a CSV or .xlsx file.');
+      restoreDatabase();render();notify(`${result.imported} clients imported; ${result.skipped} existing TINs skipped.`);
+    }catch(error){notify('Import failed: '+error.message);}
+    return;
+  }
   if(e.target.id!=='company-logo-input'||!e.target.files?.[0])return;
   const file=e.target.files[0];
   const company=String(document.querySelector('#company-name-input')?.value||getWorkspaceCompanyName()).trim();
@@ -1271,6 +1359,11 @@ document.addEventListener('input',e=>{
   companyProfileDraft={...(companyProfileDraft||getWorkspaceCompanyProfile()),name:e.target.value};
 });
 document.addEventListener('submit',async e=>{
+  if(e.target.id==='add-client-field-form'){
+    e.preventDefault();
+    try{persistCustomClientFields([...customClientFields,e.target.querySelector('#new-client-field').value]);notify('Client field added.');}catch(error){notify('Field not added: '+error.message);}
+    return;
+  }
   if(e.target.id!=='company-profile-form')return;
   e.preventDefault();
   const company=String(new FormData(e.target).get('company_name')||'').trim();

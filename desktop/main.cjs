@@ -1,9 +1,10 @@
-const {app,BrowserWindow,ipcMain,dialog,Menu}=require('electron');
+const {app,BrowserWindow,ipcMain,dialog,Menu,shell}=require('electron');
 const fs=require('node:fs');
 const path=require('node:path');
 const {pathToFileURL}=require('node:url');
 const {Store}=require('./database.cjs');
 const {seedSamples}=require('./seed.cjs');
+const {parseXlsxBuffer}=require('./migration.cjs');
 const root=path.join(__dirname,'..');
 const smoke=process.argv.includes('--smoke-test');
 const entry=pathToFileURL(path.join(root,'index.html')).href;
@@ -23,6 +24,14 @@ else app.whenReady().then(async()=>{
   }
   db=new Store(filename,root);
   if(!smoke)seedSamples(db,root);
+  if(!smoke){
+    try{
+      const backupDir=path.join(app.getPath('userData'),'backups');
+      fs.mkdirSync(backupDir,{recursive:true});
+      const daily=path.join(backupDir,'TaxGuard-'+new Date().toISOString().slice(0,10)+'.db');
+      if(!fs.existsSync(daily))db.backupTo(daily);
+    }catch(error){console.error('Automatic backup failed:',error);}
+  }
   const valid=e=>e.sender===win?.webContents && e.senderFrame===win.webContents.mainFrame;
   ipcMain.on('records:sync',(e,action,data,revision)=>{
     try{
@@ -37,6 +46,16 @@ else app.whenReady().then(async()=>{
       else if(action==='company:save')value=db.saveCompanyName(data?.name);
       else if(action==='company:profile:get')value=db.getCompanyProfile();
       else if(action==='company:profile:save')value=db.saveCompanyProfile(data);
+      else if(action==='documents:list')value=db.listClientDocuments(data?.clientId);
+      else if(action==='documents:save')value=db.saveClientDocument(data);
+      else if(action==='documents:get')value=db.getClientDocument(data?.id);
+      else if(action==='documents:delete')value=db.deleteClientDocument(data?.id);
+      else if(action==='clients:import-csv')value=db.importClientsCsv(data?.text);
+      else if(action==='clients:fields:get')value=db.getClientFields();
+      else if(action==='clients:fields:save')value=db.saveClientFields(data?.fields);
+      else if(action==='calendar:list')value=db.getCalendarRules();
+      else if(action==='calendar:save')value=db.saveCalendarRule(data);
+      else if(action==='calendar:delete')value=db.deleteCalendarRule(data?.id);
       else if(action==='save'||action==='forms'){
         if(!Number.isSafeInteger(revision))throw Error('Reload TaxGuard before saving.');
         value=action==='save'?db.saveState(data,revision):db.saveForms(data,revision);
@@ -52,6 +71,40 @@ else app.whenReady().then(async()=>{
     const filename=result.filePaths[0];
     if(fs.statSync(filename).size>10*1024*1024)throw Error('Import file exceeds 10 MB.');
     return db.importWorkspace(JSON.parse(fs.readFileSync(filename,'utf8')));
+  });
+  ipcMain.handle('clients:import-xlsx',async(e,base64)=>{
+    if(!valid(e))throw Error('Untrusted Excel import request.');
+    if(typeof base64!=='string'||base64.length>7*1024*1024||!/^[A-Za-z0-9+/]+={0,2}$/.test(base64))throw Error('Invalid Excel file.');
+    return db.importClientsRows(await parseXlsxBuffer(Buffer.from(base64,'base64')));
+  });
+  ipcMain.handle('backup:save',async(e)=>{
+    if(!valid(e))throw Error('Untrusted backup request.');
+    const result=await dialog.showSaveDialog(win,{title:'Save complete TaxGuard backup',defaultPath:'TaxGuard-backup-'+new Date().toISOString().slice(0,10)+'.db',filters:[{name:'TaxGuard SQLite backup',extensions:['db']} ]});
+    if(result.canceled||!result.filePath)return {saved:false};
+    db.backupTo(result.filePath);Store.validateBackup(result.filePath);
+    return {saved:true,filePath:result.filePath};
+  });
+  ipcMain.handle('backup:restore',async(e)=>{
+    if(!valid(e))throw Error('Untrusted restore request.');
+    const chosen=await dialog.showOpenDialog(win,{title:'Choose TaxGuard backup to restore',properties:['openFile'],filters:[{name:'TaxGuard SQLite backup',extensions:['db']} ]});
+    if(chosen.canceled)return {restored:false};
+    const backup=chosen.filePaths[0];
+    if(path.resolve(backup)===path.resolve(filename))throw Error('Choose a separate backup file, not the active database.');
+    Store.validateBackup(backup);
+    const confirmation=await dialog.showMessageBox(win,{type:'warning',buttons:['Cancel','Restore backup'],defaultId:0,cancelId:0,title:'Restore TaxGuard backup?',message:'Current records will be replaced by the selected backup.',detail:'Close any localhost TaxGuard browser tabs and other app windows first. A recovery copy of the current database will be saved automatically.'});
+    if(confirmation.response!==1)return {restored:false};
+    const recovery=path.join(app.getPath('userData'),'TaxGuard-before-restore-'+Date.now()+'.db');
+    db.backupTo(recovery);db.close();
+    try{
+      fs.copyFileSync(backup,filename);
+      db=new Store(filename,root);
+      if(db.db.prepare('PRAGMA integrity_check').get().integrity_check!=='ok')throw Error('Restored database failed integrity check.');
+    }catch(error){
+      try{db?.close()}catch{}
+      fs.copyFileSync(recovery,filename);db=new Store(filename,root);
+      throw error;
+    }
+    win.reload();return {restored:true,recovery};
   });
   ipcMain.handle('report:savePdf',async(e,defaultName)=>{
     if(!valid(e))throw Error('Untrusted PDF save request.');
@@ -83,7 +136,10 @@ else app.whenReady().then(async()=>{
     }
   });
   win.removeMenu();
-  win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
+  win.webContents.setWindowOpenHandler(({url})=>{
+    try{if(new URL(url).protocol==='https:')shell.openExternal(url);}catch{}
+    return {action:'deny'};
+  });
   win.webContents.on('will-navigate',(e,url)=>{if(url!==entry && !url.startsWith('blob:') && !url.startsWith('data:'))e.preventDefault()});
   win.webContents.session.on('will-download',(event,item)=>{
     const defaultPath=path.join(app.getPath('downloads'),item.getFilename());
@@ -121,7 +177,7 @@ else app.whenReady().then(async()=>{
       const logoBytes=Uint8Array.from(atob('${fs.readFileSync(path.join(__dirname,'icon.png')).toString('base64')}'),c=>c.charCodeAt(0));
       transfer.items.add(new File([logoBytes],'logo.png',{type:'image/png'}));
       logoInput.files=transfer.files;logoInput.dispatchEvent(new Event('change',{bubbles:true}));
-      await new Promise(r=>setTimeout(r,100));
+      for(let attempt=0;attempt<40&&!document.querySelector('#company-logo-preview img');attempt++)await new Promise(r=>setTimeout(r,50));
       if(companyInput.value!=='Smoke Test Firm'||!document.querySelector('#company-logo-preview img'))throw Error('Company profile draft was reset');
       await document.querySelector('#company-logo-preview img').decode();
       document.querySelector('#company-profile-form').requestSubmit();await new Promise(r=>setTimeout(r,100));
