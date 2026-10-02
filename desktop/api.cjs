@@ -1,6 +1,6 @@
 // Fixed operation gateway used by PHP; no SQL or filesystem paths come from the browser.
 const path=require('node:path');
-const {Store}=require('./database.cjs');
+const {Store,safeErrorMessage}=require('./database.cjs');
 const {seedSamples}=require('./seed.cjs');
 const {parseXlsxBuffer}=require('./migration.cjs');
 const dataTransfer=require('./data-transfer.cjs');
@@ -59,6 +59,6 @@ process.stdin.on('end',async()=>{
     store.recordAudit(session,action,data,auditBefore);
     if(auditTransaction){store.db.exec('COMMIT');auditTransaction=false;}
     process.stdout.write(JSON.stringify({ok:true,value}));
-  }catch(error){if(auditTransaction)try{store.db.exec('ROLLBACK')}catch{}process.stdout.write(JSON.stringify({ok:false,error:error.message}));}
+  }catch(error){if(auditTransaction)try{store.db.exec('ROLLBACK')}catch{}console.error('TaxGuard API operation failed:',error);process.stdout.write(JSON.stringify({ok:false,error:safeErrorMessage(error)}));}
   finally{store?.close();}
 });

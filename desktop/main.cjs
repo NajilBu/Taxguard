@@ -2,8 +2,7 @@ const {app,BrowserWindow,ipcMain,dialog,Menu,shell}=require('electron');
 const fs=require('node:fs');
 const path=require('node:path');
 const {pathToFileURL}=require('node:url');
-const {Store}=require('./database.cjs');
-const {seedSamples}=require('./seed.cjs');
+const {Store,safeErrorMessage}=require('./database.cjs');
 const {parseXlsxBuffer}=require('./migration.cjs');
 const dataTransfer=require('./data-transfer.cjs');
 const excelTransfer=require('./excel-transfer.cjs');
@@ -19,7 +18,6 @@ else app.whenReady().then(async()=>{
     : (process.env.TAXGUARD_DB_PATH || (app.isPackaged ? path.join(app.getPath('userData'),'taxguard.db') : path.join(root,'database/taxguard.db')));
   db=new Store(filename,root);
   db.revokeSessions('electron');
-  if(!smoke)seedSamples(db,root);
   if(!smoke){
     try{
       const backupDir=path.join(app.getPath('userData'),'backups');
@@ -73,7 +71,7 @@ else app.whenReady().then(async()=>{
       db.recordAudit(session,action,data,auditBefore);
       if(auditTransaction){db.db.exec('COMMIT');auditTransaction=false;}
       e.returnValue={ok:true,value};
-    }catch(err){if(auditTransaction)try{db.db.exec('ROLLBACK')}catch{}e.returnValue={ok:false,error:err.message}}
+    }catch(err){if(auditTransaction)try{db.db.exec('ROLLBACK')}catch{}console.error('TaxGuard database operation failed:',err);e.returnValue={ok:false,error:safeErrorMessage(err)}}
   });
   ipcMain.handle('records:import',async(e,sessionToken)=>{
     const session=authorize(e,sessionToken,'records:import');

@@ -31,6 +31,32 @@ function verifyPassword(password,stored){
     return {valid:crypto.timingSafeEqual(actual,expected),needsUpgrade:false};
   }catch{return {valid:false,needsUpgrade:false}}
 }
+function safeErrorMessage(error){
+  const message=String(error?.message||'Unexpected error.');
+  if(error?.code||/SQLITE_|sqlite (?:error|busy|locked)|constraint failed|no such (?:table|column)|ENOENT|EACCES|EPERM/i.test(message))return 'The database operation could not be completed. No changes were saved.';
+  return message.length>500?'The operation could not be completed. No changes were saved.':message;
+}
+function fileSignatureMatches(buffer,mime){
+  if(!Buffer.isBuffer(buffer)||!buffer.length)return false;
+  const hex=buffer.subarray(0,12).toString('hex'),ascii=buffer.subarray(0,12).toString('ascii');
+  if(mime==='application/pdf')return ascii.startsWith('%PDF-');
+  if(mime==='image/png')return hex.startsWith('89504e470d0a1a0a');
+  if(mime==='image/jpeg')return hex.startsWith('ffd8ff');
+  if(mime==='image/webp')return ascii.startsWith('RIFF')&&ascii.slice(8,12)==='WEBP';
+  if(mime==='image/gif')return ascii.startsWith('GIF87a')||ascii.startsWith('GIF89a');
+  if(mime==='image/bmp')return ascii.startsWith('BM');
+  if(mime==='image/x-icon'||mime==='image/vnd.microsoft.icon')return hex.startsWith('00000100');
+  return false;
+}
+function validatedDataImage(value,allowed,label,maxBytes){
+  if(value==='')return '';
+  if(typeof value!=='string'||value.length>Math.ceil(maxBytes*4/3)+200)throw Error(`${label} is too large.`);
+  const match=value.match(/^data:image\/(png|jpeg|webp|gif|bmp|x-icon|vnd\.microsoft\.icon);base64,([a-zA-Z0-9+/]+={0,2})$/);
+  if(!match)throw Error(label==='Company logo'?'Company logo must be a PNG, JPEG, WebP, GIF, BMP, or ICO image.':`${label} must be a PNG, JPEG, or WebP image.`);
+  const mime='image/'+match[1],buffer=Buffer.from(match[2],'base64');
+  if(!allowed.includes(mime)||buffer.length>maxBytes||!fileSignatureMatches(buffer,mime))throw Error(`${label} content does not match its image format.`);
+  return value;
+}
 
 function date(value) {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
@@ -353,9 +379,7 @@ class Store {
     if(!profile||typeof profile!=='object')throw Error('Invalid company profile.');
     const company=required(profile.name,'Company name');
     if(company.length>120)throw Error('Company name must be 120 characters or fewer.');
-    const logo=profile.logo||'';
-    if(typeof logo!=='string'||logo.length>7*1024*1024)throw Error('Company logo must be smaller than 5 MB.');
-    if(logo&&!/^data:image\/(png|jpeg|webp|gif|bmp|x-icon|vnd\.microsoft\.icon);base64,[a-zA-Z0-9+/=]+$/.test(logo))throw Error('Company logo must be a PNG, JPEG, WebP, GIF, BMP, or ICO image.');
+    const logo=validatedDataImage(profile.logo||'', ['image/png','image/jpeg','image/webp','image/gif','image/bmp','image/x-icon','image/vnd.microsoft.icon'],'Company logo',5*1024*1024);
     if(profile.description!==undefined&&typeof profile.description!=='string')throw Error('Company description must be text.');
     const description=profile.description===undefined?this.getCompanyProfile().description:profile.description.trim();
     if(description.length>500)throw Error('Company description must be 500 characters or fewer.');
@@ -378,9 +402,7 @@ class Store {
     const role=validRoles.includes(user.role)?user.role:'Staff';
     const active=user.is_active!==undefined?(user.is_active?1:0):1;
     const photo=user.profile_photo;
-    if(photo!==undefined&&(typeof photo!=='string'||photo.length>3*1024*1024||
-      (photo&&!/^data:image\/(png|jpeg|webp);base64,[a-zA-Z0-9+/]+={0,2}$/.test(photo))))
-      throw Error('Profile picture must be a PNG, JPEG, or WebP image smaller than 2 MB.');
+    const validatedPhoto=photo===undefined?undefined:validatedDataImage(photo,['image/png','image/jpeg','image/webp'],'Profile picture',2*1024*1024);
 
     if(user.id){
       const id=Number(user.id);
@@ -399,7 +421,7 @@ class Store {
         this.db.prepare("UPDATE users SET company_name=?, role=?, is_active=?, updated_at=CURRENT_TIMESTAMP WHERE id=?")
           .run(company,role,active,id);
       }
-      if(photo!==undefined)this.db.prepare('UPDATE users SET profile_photo=? WHERE id=?').run(photo,id);
+      if(validatedPhoto!==undefined)this.db.prepare('UPDATE users SET profile_photo=? WHERE id=?').run(validatedPhoto,id);
       try{
         if(existing.username.toLowerCase()==='admin'||id===1){
           const sql="UPDATE company_login SET company_name=?, is_active=?"+(user.password?.trim()?", password_hash=?":"")+" WHERE id=1";
@@ -413,7 +435,7 @@ class Store {
       required(user.password,'Password');
       if(user.password.trim().length<6)throw Error('Password must be at least 6 characters.');
       this.db.prepare("INSERT INTO users(username,company_name,role,password_hash,is_active,profile_photo) VALUES(?,?,?,?,?,?)")
-        .run(u,company,role,hashPassword(user.password.trim()),active,photo||'');
+        .run(u,company,role,hashPassword(user.password.trim()),active,validatedPhoto||'');
     }
     return this.getUsers();
   }
@@ -535,8 +557,9 @@ class Store {
     if(filename.length>200||/[\\/\x00-\x1f]/.test(filename))throw Error('Invalid document filename.');
     const mime=String(data?.mime||'');
     if(!['application/pdf','image/png','image/jpeg','image/webp'].includes(mime))throw Error('Choose a PDF, PNG, JPEG, or WebP file.');
-    const content=String(data?.base64||'');
-    if(!/^[A-Za-z0-9+/]+={0,2}$/.test(content)||content.length>7*1024*1024||Buffer.from(content,'base64').length>5*1024*1024)throw Error('Document must be 5 MB or less.');
+    const content=String(data?.base64||''),contentBuffer=Buffer.from(content,'base64');
+    if(!/^[A-Za-z0-9+/]+={0,2}$/.test(content)||content.length>7*1024*1024||contentBuffer.length>5*1024*1024)throw Error('Document must be 5 MB or less.');
+    if(!fileSignatureMatches(contentBuffer,mime))throw Error('Document content does not match the selected file type.');
     const filingKey=String(data?.filingKey||'');
     if(filingKey&&(!filingKey.startsWith(clientId+':')||!/^\d+:\d{4}:[A-Za-z0-9() ._-]+:[A-Za-z0-9 _-]+$/.test(filingKey)))throw Error('Invalid filing association.');
     this.db.prepare('INSERT INTO client_documents(client_id,filing_key,filename,mime_type,content_base64) VALUES(?,?,?,?,?)').run(clientId,filingKey,filename,mime,content);
@@ -554,4 +577,4 @@ class Store {
   }
   close(){this.db.close()}
 }
-module.exports={Store,scheduleDate,CURRENT_SCHEMA_VERSION};
+module.exports={Store,scheduleDate,CURRENT_SCHEMA_VERSION,safeErrorMessage,fileSignatureMatches};

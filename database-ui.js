@@ -755,11 +755,12 @@ function openClientDocuments(clientId,parent){
       if(!file)return;
       if(file.size>5*1024*1024){notify('Document must be 5 MB or less.');return;}
       if(!['application/pdf','image/png','image/jpeg','image/webp'].includes(file.type)){notify('Choose a PDF, PNG, JPEG, or WebP file.');return;}
+      const submit=event.submitter||event.target.querySelector('button[type="submit"],button:not([type])');if(submit.disabled)return;submit.disabled=true;submit.textContent='Saving…';
       try{
         const base64=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(Error('Could not read document.'));reader.readAsDataURL(file);});
         window.taxguardDB.saveClientDocument({clientId,filename:file.name,mime:file.type,base64,filingKey:dialog.querySelector('#document-filing-key').value});
         renderDocuments();notify('Document saved.');
-      }catch(error){notify('Document not saved: '+error.message);}
+      }catch(error){submit.disabled=false;submit.textContent='Add document';notify('Document not saved: '+error.message);}
     };
     dialog.querySelectorAll('[data-document-download]').forEach(button=>button.onclick=()=>{
       try{

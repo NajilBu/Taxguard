@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const os=require('node:os');
 const path=require('node:path');
 const crypto=require('node:crypto');
-const {Store,scheduleDate,CURRENT_SCHEMA_VERSION}=require('./database.cjs');
+const {Store,scheduleDate,CURRENT_SCHEMA_VERSION,safeErrorMessage,fileSignatureMatches}=require('./database.cjs');
 const dataTransfer=require('./data-transfer.cjs');
 const {seedSamples}=require('./seed.cjs');
 const root=path.join(__dirname,'..');
@@ -104,6 +104,18 @@ test('Client documents persist and remain linked to filing records',()=>{
   assert.equal(store.listClientDocuments(1)[0].filing_key,'1:2026:2550-Q:Q1');
   assert.equal(store.deleteClientDocument(listed[0].id).length,0);
   store.close();
+});
+test('Uploads require content signatures and internal database errors are sanitized',()=>{
+  assert.equal(fileSignatureMatches(Buffer.from('%PDF-1.7\n'),'application/pdf'),true);
+  assert.equal(fileSignatureMatches(Buffer.from('not pdf'),'application/pdf'),false);
+  assert.equal(safeErrorMessage({code:'ERR_SQLITE_ERROR',message:'SQLITE_ERROR: no such table at C:\\secret\\taxguard.db'}),'The database operation could not be completed. No changes were saved.');
+  const store=new Store(fixture().file,root);setupAdmin(store);store.saveState({clients:[client],filings:{}});
+  try{
+    assert.throws(()=>store.saveClientDocument({clientId:1,filename:'fake.pdf',mime:'application/pdf',base64:Buffer.from('not a pdf').toString('base64')}),/content does not match/);
+    assert.throws(()=>store.saveCompanyProfile({name:'Firm',logo:'data:image/png;base64,'+Buffer.from('fake png').toString('base64')}),/content does not match/);
+    assert.throws(()=>store.saveUser({username:'badphoto',company_name:'Firm',role:'Staff',password:'secret123',profile_photo:'data:image/jpeg;base64,'+Buffer.from('fake jpeg').toString('base64')}),/content does not match/);
+    assert.equal(store.listClientDocuments(1).length,0);
+  }finally{store.close();}
 });
 test('Selective data transfer maps clients, filings, and documents without changing unselected records',()=>{
   const source=new Store(fixture().file,root),target=new Store(fixture().file,root);
@@ -484,7 +496,7 @@ test('Report preview saves PDF directly without triggering print dialog prompt',
   // Verify preview-save-pdf no longer calls window.print()
   assert.equal(dbUiJs.includes("m.querySelector('#preview-save-pdf')?.addEventListener('click',()=>window.print())"),false);
   const preloadCjs=fs.readFileSync(path.join(root,'desktop/preload.cjs'),'utf8');
-  assert.equal(preloadCjs.includes("savePdf:(defaultName)=>ipcRenderer.invoke('report:savePdf',defaultName,sessionToken)"),true);
+  assert.equal(preloadCjs.includes("savePdf:(defaultName)=>invoke('report:savePdf',defaultName,sessionToken)"),true);
   const mainCjs=fs.readFileSync(path.join(root,'desktop/main.cjs'),'utf8');
   assert.equal(mainCjs.includes("ipcMain.handle('report:savePdf'"),true);
   assert.equal(mainCjs.includes('printToPDF'),true);
@@ -502,7 +514,8 @@ test('TaxGuard shield logo is configured as desktop window icon and Windows exe 
   const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
   assert.equal(pkg.build?.icon,'desktop/icon.ico');
   assert.equal(pkg.build?.win?.icon,'desktop/icon.ico');
-  assert.equal(pkg.build?.files?.includes('desktop/**/*'),true);
+  assert.equal(pkg.build?.files?.includes('desktop/icon.ico'),true);
+  assert.equal(pkg.build?.files?.includes('desktop/icon.png'),true);
   const mainCjs=fs.readFileSync(path.join(root,'desktop/main.cjs'),'utf8');
   assert.equal(mainCjs.includes('icon:appIconPath')||mainCjs.includes('icon.ico'),true);
   const indexHtml=fs.readFileSync(path.join(root,'index.html'),'utf8');
@@ -667,4 +680,21 @@ test('Avatar initials resolve dynamically from username and firm (e.g. FeviRuth 
   assert.equal(sandbox.getUserInitials('admin'), 'AD');
   assert.equal(sandbox.getUserInitials('John Doe'), 'JD');
   assert.equal(sandbox.getUserInitials('EOO Tax & Accounting'), 'EO');
+});
+
+test('Release package excludes live data, samples, tests, and development artifacts',()=>{
+  const manifest=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
+  const packaged=new Set(manifest.build.files);
+  assert.equal(manifest.version,'0.9.1');
+  assert.equal(packaged.has('database/schema.sql'),true);
+  assert.equal(packaged.has('database/default-forms.json'),true);
+  assert.equal(packaged.has('database/**/*'),false);
+  assert.equal(packaged.has('desktop/**/*'),false);
+  for(const item of packaged){
+    assert.doesNotMatch(item,/taxguard\.db|sample-clients|seed\.sql|\.test\.|smoke|generate-icon/i);
+  }
+  const main=fs.readFileSync(path.join(root,'desktop/main.cjs'),'utf8');
+  assert.match(main,/app\.isPackaged \? path\.join\(app\.getPath\('userData'\),'taxguard\.db'\)/);
+  assert.doesNotMatch(main,/seedSamples/);
+  assert.match(main,/nodeIntegration:false,contextIsolation:true,sandbox:true/);
 });

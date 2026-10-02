@@ -2,4 +2,7 @@ node_modules/
 dist/
 database/*.db-wal
 database/*.db-shm
+database/*.pre-migration-*.db
+database/*.db-journal
+*.log
 .test-data/
