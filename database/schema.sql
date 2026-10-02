@@ -98,3 +98,26 @@ CREATE TABLE IF NOT EXISTS calendar_rules (
 CREATE INDEX IF NOT EXISTS idx_deadlines_year ON deadlines(tax_year);
 CREATE INDEX IF NOT EXISTS idx_filings_client ON filings(client_id);
 CREATE INDEX IF NOT EXISTS idx_filings_status ON filings(status);
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  token_hash TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  scope TEXT NOT NULL CHECK(scope IN ('electron','browser')),
+  expires_at INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  occurred_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  username TEXT NOT NULL,
+  role TEXT NOT NULL,
+  action TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL DEFAULT '',
+  summary_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_audit_log_time ON audit_log(occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(username);
+CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);

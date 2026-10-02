@@ -725,10 +725,17 @@ function openReportPreview(reportType,reportYear){
 function getCurrentUserAuth(){
   try{
     const s=sessionStorage.getItem('taxguard_auth');
-    return s?JSON.parse(s):{username:'admin',company:'EOO Tax & Accounting',role:'Admin'};
+    return s?JSON.parse(s):{username:'',company:'TaxGuard',role:''};
   }catch{
-    return {username:'admin',company:'EOO Tax & Accounting',role:'Admin'};
+    return {username:'',company:'TaxGuard',role:''};
   }
+}
+let auditFilters={username:'',action:'',from:'',to:''};
+function auditLogPanel(isAdmin){
+  if(!isAdmin||!database?.getAuditLogs)return '';
+  let rows=[];try{rows=database.getAuditLogs(auditFilters)||[];}catch(error){return `<div class="panel" style="margin-top:24px"><div class="panel-body"><p>Audit log unavailable: ${esc(error.message)}</p></div></div>`;}
+  const actions=[...new Set(rows.map(row=>row.action))].sort();
+  return `<div class="panel audit-log-panel" style="margin-top:24px"><div class="panel-head"><div><h2>System audit log</h2><p>Backend-recorded history of successful changes. Entries cannot be edited from TaxGuard.</p></div><span class="subtle">${rows.length} ENTRIES</span></div><div class="panel-body"><form id="audit-filter-form" class="toolbar"><input name="username" value="${esc(auditFilters.username)}" placeholder="User" aria-label="Filter audit log by user"><select name="action"><option value="">All actions</option>${actions.map(action=>`<option value="${esc(action)}" ${auditFilters.action===action?'selected':''}>${esc(action)}</option>`).join('')}</select><input name="from" type="date" value="${esc(auditFilters.from)}" aria-label="From date"><input name="to" type="date" value="${esc(auditFilters.to)}" aria-label="To date"><button class="btn secondary">Apply filters</button><button type="button" class="btn" id="clear-audit-filters">Clear</button></form></div><div class="table-scroll"><table><thead><tr><th>Date and time</th><th>User</th><th>Role</th><th>Action</th><th>Change summary</th></tr></thead><tbody>${rows.map(row=>`<tr><td>${esc(row.occurred_at)}</td><td>${esc(row.username)}</td><td>${esc(row.role)}</td><td><strong>${esc(row.action)}</strong></td><td>${esc(Object.entries(row.summary||{}).map(([key,value])=>`${key}: ${Array.isArray(value)?value.join(', '):value??''}`).join(' · ')||row.entity_type)}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">No audit entries match these filters.</td></tr>'}</tbody></table></div></div>`;
 }
 
 function openClientDocuments(clientId,parent){
@@ -814,9 +821,9 @@ function editClientField(oldName){
   };
   dialog.showModal();
 }
-function backupSettingsPanel(){
+function backupSettingsPanel(isAdmin=true){
   if(!database?.saveBackup)return '';
-  return `<div class="panel backup-panel" style="margin-top:24px"><div class="panel-head"><div><h2>Backup &amp; restore</h2><p>The desktop app saves a daily SQLite backup on launch. You can also save a complete copy of clients, filings, users, documents, company profile, and calendar adjustments.</p></div></div><div class="panel-body storage-actions"><button type="button" class="btn primary" id="save-full-backup">Save backup</button><button type="button" class="btn secondary" id="restore-full-backup">Restore backup</button></div></div>`;
+  return `<div class="panel backup-panel" style="margin-top:24px"><div class="panel-head"><div><h2>Backup${isAdmin?' &amp; restore':''}</h2><p>The desktop app saves a daily SQLite backup on launch. You can also save a complete copy of clients, filings, users, documents, company profile, and calendar adjustments.</p></div></div><div class="panel-body storage-actions"><button type="button" class="btn primary" id="save-full-backup">Save backup</button>${isAdmin?'<button type="button" class="btn secondary" id="restore-full-backup">Restore backup</button>':''}</div></div>`;
 }
 function userPhotoMarkup(username,photo){
   return typeof photo==='string'&&/^data:image\/(png|jpeg|webp);base64,[a-zA-Z0-9+/]+={0,2}$/.test(photo)
@@ -844,7 +851,7 @@ function getWorkspaceCompanyName(){
   if(window.taxguardDB?.getCompanyName){
     try{return window.taxguardDB.getCompanyName();}catch(e){}
   }
-  return localStorage.getItem('taxguard_company_name')||getCurrentUserAuth().company||'EOO Tax & Accounting';
+  return localStorage.getItem('taxguard_company_name')||getCurrentUserAuth().company||'TaxGuard';
 }
 
 let lastCompanyProfile=null;
@@ -916,7 +923,7 @@ function fetchWorkstationUsers(){
     const stored=localStorage.getItem('taxguard_users');
     if(stored)return JSON.parse(stored);
   }catch(e){}
-  return [{id:1,username:'admin',company_name:'EOO Tax & Accounting',role:'Admin',is_active:1,created_at:'2026-01-01'}];
+  return [];
 }
 
 function persistWorkstationUser(userData){
@@ -942,7 +949,7 @@ function persistWorkstationUser(userData){
     users.push({
       id:Date.now(),
       username:userData.username,
-      company_name:userData.company_name||'EOO Tax & Accounting',
+      company_name:userData.company_name||'TaxGuard',
       profile_photo:userData.profile_photo||'',
       role:userData.role||'Staff',
       password:userData.password,
@@ -978,7 +985,7 @@ function openUserAccountModal(userId,initialData=null){
   const canDelete=isEditing&&!isCurrent&&!(user.is_active&&totalActive<=1);
 
   const usernameVal=initialData?.username!==undefined?initialData.username:(user?.username||'');
-  const companyVal=initialData?.company_name!==undefined?initialData.company_name:(user?.company_name||'EOO Tax & Accounting');
+  const companyVal=initialData?.company_name!==undefined?initialData.company_name:(user?.company_name||'TaxGuard');
   const roleVal=initialData?.role!==undefined?initialData.role:(user?.role||'Staff');
   const isActiveVal=initialData?.is_active!==undefined?initialData.is_active:((!user||user.is_active)?1:0);
   const passwordVal=initialData?.password!==undefined?initialData.password:'';
@@ -1162,7 +1169,8 @@ function openUserAccountModal(userId,initialData=null){
   });
 }
 document.querySelector('.header-user-avatar')?.addEventListener('click',()=>{
-  const username=getCurrentUserAuth().username;
+  const auth=getCurrentUserAuth();if(auth.role!=='Admin'){notify('Administrator access is required to edit user accounts.');return;}
+  const username=auth.username;
   const user=fetchWorkstationUsers().find(u=>u.username.toLowerCase()===String(username||'').toLowerCase());
   if(user)openUserAccountModal(user.id);
 });
@@ -1277,8 +1285,9 @@ settings=function(){
   const over=obs.filter(o=>!o.filing&&o.due<today).length;
   const pct=obs.length?Math.round(done/obs.length*100):0;
 
-  const users=fetchWorkstationUsers();
   const currentAuth=getCurrentUserAuth();
+  const isAdmin=currentAuth.role==='Admin';
+  const users=isAdmin?fetchWorkstationUsers():[];
   const companyProfile=companyProfileDraft||getWorkspaceCompanyProfile();
   const companyName=companyProfile.name;
   const companyLogoPreview=companyProfile.logo
@@ -1304,7 +1313,7 @@ settings=function(){
           </div>
         </div>
       </td>
-      <td style="padding:12px 16px;color:#334e68">${esc(u.company_name||'EOO Tax & Accounting')}</td>
+      <td style="padding:12px 16px;color:#334e68">${esc(u.company_name||'TaxGuard')}</td>
       <td style="padding:12px 16px">
         <span class="badge" style="background:${roleColors.bg};color:${roleColors.text};border:1px solid ${roleColors.border};font-weight:700">${esc(u.role||'Staff')}</span>
       </td>
@@ -1315,7 +1324,7 @@ settings=function(){
   }).join('');
 
   return heading('Settings','Personalize the TaxGuard workspace.','')+`
-    <div class="profile-settings-grid"><div class="panel company-settings-panel">
+    <div class="profile-settings-grid" ${isAdmin?'':'hidden'}><div class="panel company-settings-panel">
       <div class="panel-head"><div><h2>Company Profile</h2><p>Set the firm name and logo shown throughout this workspace and in reports.</p></div></div>
       <div class="panel-body">
         <form id="company-profile-form" class="company-profile-form">
@@ -1335,10 +1344,10 @@ settings=function(){
         <div class="panel-head"><div><h2>Color theme</h2><p>Choose a preset workspace accent color.</p></div></div>
         <div class="theme-options">${[['blue','Blue'],['navy','Navy'],['green','Green'],['purple','Purple'],['orange','Orange'],['red','Red']].map(([v,l])=>`<button class="theme-option ${current===v?'active':''}" data-theme="${v}"><span class="theme-swatch ${v}"></span><span>${l}</span>${current===v?'<b>✓</b>':''}</button>`).join('')}</div>
       </div>
-      <div class="panel storage-panel"><div class="panel-head"><div><h2>Data export &amp; import</h2><p>Choose specific records to move between TaxGuard workstations. Full backup and restore are available below.</p></div></div><div class="panel-body data-transfer-actions"><button type="button" class="btn secondary" id="open-data-export">Export selected data</button><button type="button" class="btn secondary" id="open-data-import">Import selected data</button><small>Excel workbooks can include clients, filings, schedules, documents, and the company profile. User accounts and passwords are excluded.</small></div></div>
+      <div class="panel storage-panel"><div class="panel-head"><div><h2>Data export${isAdmin?' &amp; import':''}</h2><p>Choose specific records to ${isAdmin?'move between TaxGuard workstations':'export from TaxGuard'}.</p></div></div><div class="panel-body data-transfer-actions"><button type="button" class="btn secondary" id="open-data-export">Export selected data</button>${isAdmin?'<button type="button" class="btn secondary" id="open-data-import">Import selected data</button>':''}<small>Excel workbooks include selected client profiles and filing records. User accounts and passwords are excluded.</small></div></div>
     </div>
-    <div class="panel users-panel" style="margin-top:24px"><div class="panel-head"><div><h2>User Account Management</h2><p>Manage workstation accounts.</p></div><button type="button" class="btn primary" id="btn-add-user">+ Add user account</button></div><div class="panel-body" style="padding:0"><div class="table-scroll"><table><thead><tr><th>User account</th><th>Firm / display name</th><th>Role</th><th>Status</th></tr></thead><tbody>${usersRowsHtml}</tbody></table></div></div></div>
-    <div class="panel reports-panel" style="margin-top:24px"><div class="panel-head"><div><h2>Compliance &amp; Audit Reports</h2><p>Click any report card below to open its executive preview with visual charts, custom commentary, and PDF or Excel export.</p></div><span class="subtle">${year} TAX YEAR</span></div><div class="panel-body"><div class="report-stat-strip"><div class="report-stat-card"><small>Total obligations (${year})</small><strong>${obs.length}</strong></div><div class="report-stat-card"><small>Filings completed</small><strong style="color:var(--green)">${done}</strong></div><div class="report-stat-card"><small>Compliance rate</small><strong>${pct}%</strong></div><div class="report-stat-card"><small>Overdue items</small><strong style="color:${over>0?'#c36959':'var(--ink)'}">${over}</strong></div></div><div class="reports-grid"><div class="report-card" id="open-report-preview" data-report="summary" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📊</span><div><strong>Annual Compliance Summary</strong><small>Client compliance standing, completion percentage, and obligation counts for ${year}.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; export &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF / Excel</span></div></div><div class="report-card" id="export-filings-report" data-report="filings" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📑</span><div><strong>Filing Audit Log</strong><small>Detailed submission trail with BIR confirmation numbers, filing dates, and periods.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; export &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF / Excel</span></div></div><div class="report-card" id="export-clients-report" data-report="clients" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">👥</span><div><strong>Client Master Roster</strong><small>Complete directory of registered taxpayers, TINs, tax types, and required BIR forms.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; export &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF / Excel</span></div></div></div></div></div>${backupSettingsPanel()}`;
+    ${isAdmin?`<div class="panel users-panel" style="margin-top:24px"><div class="panel-head"><div><h2>User Account Management</h2><p>Manage workstation accounts.</p></div><button type="button" class="btn primary" id="btn-add-user">+ Add user account</button></div><div class="panel-body" style="padding:0"><div class="table-scroll"><table><thead><tr><th>User account</th><th>Firm / display name</th><th>Role</th><th>Status</th></tr></thead><tbody>${usersRowsHtml}</tbody></table></div></div></div>${auditLogPanel(true)}`:''}
+    <div class="panel reports-panel" style="margin-top:24px"><div class="panel-head"><div><h2>Compliance &amp; Audit Reports</h2><p>Click any report card below to open its executive preview with visual charts, custom commentary, and PDF or Excel export.</p></div><span class="subtle">${year} TAX YEAR</span></div><div class="panel-body"><div class="report-stat-strip"><div class="report-stat-card"><small>Total obligations (${year})</small><strong>${obs.length}</strong></div><div class="report-stat-card"><small>Filings completed</small><strong style="color:var(--green)">${done}</strong></div><div class="report-stat-card"><small>Compliance rate</small><strong>${pct}%</strong></div><div class="report-stat-card"><small>Overdue items</small><strong style="color:${over>0?'#c36959':'var(--ink)'}">${over}</strong></div></div><div class="reports-grid"><div class="report-card" id="open-report-preview" data-report="summary" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📊</span><div><strong>Annual Compliance Summary</strong><small>Client compliance standing, completion percentage, and obligation counts for ${year}.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; export &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF / Excel</span></div></div><div class="report-card" id="export-filings-report" data-report="filings" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">📑</span><div><strong>Filing Audit Log</strong><small>Detailed submission trail with BIR confirmation numbers, filing dates, and periods.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; export &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF / Excel</span></div></div><div class="report-card" id="export-clients-report" data-report="clients" role="button" tabindex="0"><div class="report-card-head"><span class="report-icon">👥</span><div><strong>Client Master Roster</strong><small>Complete directory of registered taxpayers, TINs, tax types, and required BIR forms.</small></div></div><div class="report-card-footer"><span class="report-open-link">👁️ Open preview &amp; export &rarr;</span><span class="badge" style="background:#eef4fd;color:#2766db;font-weight:600">PDF / Excel</span></div></div></div></div></div>${backupSettingsPanel(isAdmin)}`;
 };
 const dataSectionLabels={clients:'Clients & tax profiles',filings:'Filing records',forms:'Form schedules',documents:'Client documents',companyProfile:'Company profile'};
 function dataSectionChoices(available,defaults=available){
@@ -1486,6 +1495,7 @@ document.addEventListener('click',async e=>{
   }
   if(e.target.closest('#open-data-export'))openDataExportDialog();
   if(e.target.closest('#open-data-import'))openDataImportDialog();
+  if(e.target.closest('#clear-audit-filters')){auditFilters={username:'',action:'',from:'',to:''};render();return;}
   const removeField=e.target.closest('[data-remove-client-field]');
   if(removeField){
     const field=removeField.dataset.removeClientField;
@@ -1545,6 +1555,9 @@ document.addEventListener('input',e=>{
   if(e.target.id==='company-description-input')companyProfileDraft={...(companyProfileDraft||getWorkspaceCompanyProfile()),description:e.target.value};
 });
 document.addEventListener('submit',async e=>{
+  if(e.target.id==='audit-filter-form'){
+    e.preventDefault();const data=new FormData(e.target);auditFilters={username:String(data.get('username')||'').trim(),action:String(data.get('action')||''),from:String(data.get('from')||''),to:String(data.get('to')||'')};render();return;
+  }
   if(e.target.id==='add-client-field-form'){
     e.preventDefault();
     const field=e.target.querySelector('#new-client-field').value.trim();
@@ -1593,6 +1606,7 @@ window.addEventListener('focus',()=>{
   // Native file pickers return focus before delivering the selected file.
   // Replacing this form here detaches its input and loses that event.
   if(document.querySelector('#company-profile-form'))return;
+  if(!document.body.classList.contains('logged-in')||!getCurrentUserAuth().username)return;
   window.refreshCompanyProfile?.();
   if(database&&!document.querySelector('#modal').open){try{restoreDatabase();render();}catch(error){notify('Could not refresh records: '+error.message);}}
 });

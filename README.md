@@ -1,6 +1,6 @@
-# TaxGuard 0.8.0
+# TaxGuard 0.9.1
 
-TaxGuard tracks clients, required BIR forms, filing records, and deadlines in a local SQLite database. The Electron desktop app and the XAMPP localhost interface use `database/taxguard.db`. The localhost interface requires Apache and the Node gateway in `api.php`; the desktop app runs with Electron. GitHub Pages is a separate browser-storage demo and cannot access the local SQLite database.
+TaxGuard tracks clients, required BIR forms, filing records, and deadlines in a local SQLite database. During development, the Electron app and XAMPP localhost interface use `database/taxguard.db`. A packaged desktop installation creates its database in Electron's application-data directory. The localhost interface requires Apache and the Node gateway in `api.php`; the desktop app runs with Electron. GitHub Pages is a separate browser-storage demo and cannot access the local SQLite database.
 
 ## Run and verify
 
@@ -12,6 +12,18 @@ npm.cmd start
 ```
 
 For the localhost interface, start Apache in XAMPP and open `http://localhost/Taxguard/`. If Node is not installed at `C:\Program Files\nodejs\node.exe`, set `TAXGUARD_NODE_PATH` in Apache's environment. Refresh the page or return focus to the desktop window to load changes made in the other interface. Stale saves are rejected.
+
+On a new database, TaxGuard displays **Set Up TaxGuard** before sign-in. Enter the company name and create the first administrator account. TaxGuard does not create or display a default password. Existing databases retain their existing accounts.
+
+New and changed passwords are stored as salted `scrypt` hashes. When an existing account with the older SHA-256 format signs in successfully, TaxGuard upgrades that hash automatically; an unsuccessful login never changes it.
+
+Successful sign-in creates a random backend session token scoped to either the desktop app or localhost browser. Tokens are stored only as SHA-256 hashes, expire after 30 minutes of inactivity, and are revoked on sign-out. Client, filing, report, document, import, export, and backup operations require a valid session; the workspace does not load protected data before authentication.
+
+Administrator accounts manage users, the company profile, custom client fields, form and calendar configuration, imports, and backup restoration. Staff, Tax Associate, and Auditor accounts can work with client and filing records, documents, reports, exports, and backup creation. These permissions are enforced by the backend as well as the interface.
+
+The SQLite schema is upgraded through numbered migrations. TaxGuard checks database integrity at startup, creates a timestamped `.pre-migration-vN-to-vN-...db` safety copy before upgrading an existing database, and applies each migration in a transaction. Databases and backups from newer unsupported schema versions or with failed integrity checks are rejected with a recovery message instead of being modified.
+
+Successful record changes are written to an append-only application audit log with the authenticated username, role, UTC timestamp, action, and a compact change summary. Passwords, profile-image data, document contents, and full client records are not copied into the log. Administrators can search the audit viewer in Settings by user, action, and date; other roles cannot access it.
 
 Run the automated checks:
 

@@ -50,12 +50,12 @@
           <div class="firm-chip">
             <span class="avatar company-logo-slot">EO</span>
             <div>
-              <strong id="login-company-display">EOO Tax &amp; Accounting</strong>
+              <strong id="login-company-display">TaxGuard</strong>
               <small>Compliance Station</small>
             </div>
           </div>
-          <h2>Sign In to Workspace</h2>
-          <p>Authenticate with your company workstation credentials to continue.</p>
+          <h2 id="auth-panel-title">Sign In to Workspace</h2>
+          <p id="auth-panel-description">Authenticate with your company workstation credentials to continue.</p>
         </div>
 
         <form id="login-form" autocomplete="on">
@@ -70,10 +70,7 @@
           </div>
 
           <div class="form-group">
-            <div class="label-row">
-              <label for="login-password">Password</label>
-              <button type="button" class="link-btn" id="fill-demo-btn">Fill demo credentials</button>
-            </div>
+            <div class="label-row"><label for="login-password">Password</label></div>
             <div class="input-with-icon">
               <span class="input-icon">🔒</span>
               <input type="password" id="login-password" name="password" placeholder="••••••••" required autocomplete="current-password">
@@ -90,24 +87,22 @@
             <span class="btn-icon">→</span>
           </button>
         </form>
-
-        <div class="demo-account-callout">
-          <div class="callout-header">
-            <span class="callout-badge">DEFAULT ACCESS</span>
-            <span>Pre-configured account</span>
-          </div>
-          <div class="callout-creds">
-            <div><small>User:</small> <code>admin</code></div>
-            <div><small>Password:</small> <code>taxguard2026</code></div>
-          </div>
-        </div>
+        <form id="setup-form" autocomplete="off" hidden>
+          <div id="setup-error-alert" class="login-alert" style="display:none" role="alert"></div>
+          <div class="form-group"><label for="setup-company">Company / Firm Name</label><input id="setup-company" name="company" required maxlength="120" autocomplete="organization"></div>
+          <div class="form-group"><label for="setup-username">Administrator Username</label><input id="setup-username" name="username" required maxlength="100" autocomplete="username" pattern="^[a-zA-Z0-9._ -]+$"></div>
+          <div class="form-group"><label for="setup-password">Password</label><input id="setup-password" name="password" type="password" required minlength="8" autocomplete="new-password"></div>
+          <div class="form-group"><label for="setup-password-confirm">Confirm Password</label><input id="setup-password-confirm" name="password_confirmation" type="password" required minlength="8" autocomplete="new-password"></div>
+          <p class="session-notice"><span class="notice-lock">🔒</span> This creates the first administrator for this workstation.</p>
+          <button type="submit" id="setup-btn" class="btn primary login-submit-btn"><span class="btn-text">Create Administrator</span><span class="btn-icon">→</span></button>
+        </form>
 
         <div class="login-box-footer">
-          <span>TaxGuard Compliance Workspace v0.1.0</span>
+          <span>TaxGuard Compliance Workspace v0.9.1</span>
           <span>Protected Local Workstation</span>
         </div>
       </div>
     </div>
   </section>
 
-  <aside><a class="brand" href="#"><span class="shield">T</span>TaxGuard</a><div class="workspace">WORKSPACE</div><nav><button data-page="dashboard" class="selected">▦ <span>Overview</span></button><button data-page="clients">♙ <span>Client directory</span></button><button data-page="tracker">☷ <span>Compliance tracker</span></button><button data-page="deadlines">◷ <span>Deadline reference</span></button><button data-page="settings">⚙ <span>Settings</span></button></nav><div class="sidebar-note"><span class="live-dot"></span> Compliance workspace<p>Centralized filing records.</p></div><div class="firm"><div class="avatar">EO</div><div class="firm-info">EOO Tax &amp; Accounting<small>Compliance team</small></div></div></aside><main><header><div class="breadcrumb">Workspace <span>/</span> <b id="crumb">Overview</b></div><div class="header-right"><div class="dashboard-clock header-clock" aria-label="Current local date and time"><span class="dashboard-clock-date"></span><time class="dashboard-clock-time"></time></div><button type="button" class="avatar header-user-avatar" title="Edit your account" aria-label="Edit your account">AC</button><button type="button" class="btn text-btn header-logout-btn" id="header-logout-btn">Sign out</button></div></header><section id="content"></section><footer>TaxGuard · Integrated multi-year compliance monitoring <span>Changes saved in this browser</span></footer></main><dialog id="modal"></dialog><div id="toast" role="status" popover="manual"></div><script src="browser-database.js"></script><script src="form-allocation.js"></script><script src="dialog-dismiss.js"></script><script src="app.js"></script><script src="database-ui.js"></script></body></html>
+  <aside><a class="brand" href="#"><span class="shield">T</span>TaxGuard</a><div class="workspace">WORKSPACE</div><nav><button data-page="dashboard" class="selected">▦ <span>Overview</span></button><button data-page="clients">♙ <span>Client directory</span></button><button data-page="tracker">☷ <span>Compliance tracker</span></button><button data-page="deadlines">◷ <span>Deadline reference</span></button><button data-page="settings">⚙ <span>Settings</span></button></nav><div class="sidebar-note"><span class="live-dot"></span> Compliance workspace<p>Centralized filing records.</p></div><div class="firm"><div class="avatar">TG</div><div class="firm-info">TaxGuard<small>Compliance team</small></div></div></aside><main><header><div class="breadcrumb">Workspace <span>/</span> <b id="crumb">Overview</b></div><div class="header-right"><div class="dashboard-clock header-clock" aria-label="Current local date and time"><span class="dashboard-clock-date"></span><time class="dashboard-clock-time"></time></div><button type="button" class="avatar header-user-avatar" title="Edit your account" aria-label="Edit your account">AC</button><button type="button" class="btn text-btn header-logout-btn" id="header-logout-btn">Sign out</button></div></header><section id="content"></section><footer>TaxGuard · Integrated multi-year compliance monitoring <span>Changes saved in this browser</span></footer></main><dialog id="modal"></dialog><div id="toast" role="status" popover="manual"></div><script src="browser-database.js"></script><script src="form-allocation.js"></script><script src="dialog-dismiss.js"></script><script src="app.js"></script><script src="database-ui.js"></script></body></html>

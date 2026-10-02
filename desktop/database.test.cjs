@@ -3,7 +3,8 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const os=require('node:os');
 const path=require('node:path');
-const {Store,scheduleDate}=require('./database.cjs');
+const crypto=require('node:crypto');
+const {Store,scheduleDate,CURRENT_SCHEMA_VERSION}=require('./database.cjs');
 const dataTransfer=require('./data-transfer.cjs');
 const {seedSamples}=require('./seed.cjs');
 const root=path.join(__dirname,'..');
@@ -119,7 +120,7 @@ test('Selective data transfer maps clients, filings, and documents without chang
   assert.equal(loaded.clients.length,2);assert.equal(loaded.clients.find(c=>c.id===1).name,'Existing');
   assert.equal(loaded.filings[`${imported.id}:2026:2550-Q:Q1`].reference,'SOURCE');
   assert.equal(target.listClientDocuments(imported.id)[0].filing_key,`${imported.id}:2026:2550-Q:Q1`);
-  assert.equal(target.getCompanyName(),'EOO Tax & Accounting');
+  assert.equal(target.getCompanyName(),'TaxGuard');
   const again=dataTransfer.importData(target,payload,['clients','filings','documents'],target.revision());
   assert.equal(again.clients.skipped,1);assert.equal(again.filings.skipped,1);assert.equal(again.documents.skipped,1);
   source.close();target.close();
@@ -201,6 +202,7 @@ test('Calendar holidays and sourced extensions persist and validate',()=>{
 });
 test('Full SQLite backup includes clients, users, documents, and calendar rules',()=>{
   const {dir,file}=fixture(),backup=path.join(dir,'complete-backup.db');let store=new Store(file,root);
+  setupAdmin(store);
   store.saveState({clients:[client],filings:{}});
   store.saveClientDocument({clientId:1,filename:'proof.pdf',mime:'application/pdf',base64:Buffer.from('%PDF-1.4').toString('base64')});
   store.saveCalendarRule({rule_type:'holiday',rule_date:'2026-10-12',label:'Test day'});
@@ -211,8 +213,80 @@ test('Full SQLite backup includes clients, users, documents, and calendar rules'
   assert.equal(store.listClientDocuments(1).length,1);
   assert.equal(store.getCalendarRules().length,1);store.close();
 });
+test('Versioned migration creates a safety backup and preserves older database records',()=>{
+  const {dir,file}=fixture();let store=new Store(file,root);setupAdmin(store);
+  store.saveState({clients:[client],filings:{}});store.close();
+  const {DatabaseSync}=require('node:sqlite'),legacy=new DatabaseSync(file);
+  legacy.exec('PRAGMA user_version=1');legacy.close();
+  store=new Store(file,root);
+  try{
+    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version,CURRENT_SCHEMA_VERSION);
+    assert.equal(store.load().clients[0].tin,client.tin);
+    assert.ok(store.migrationBackupPath&&fs.existsSync(store.migrationBackupPath));
+    assert.equal(Store.validateBackup(store.migrationBackupPath),true);
+    const backup=new DatabaseSync(store.migrationBackupPath,{readOnly:true});
+    assert.equal(backup.prepare('PRAGMA user_version').get().user_version,1);backup.close();
+  }finally{store.close();}
+  assert.equal(fs.readdirSync(dir).filter(name=>name.includes('.pre-migration-')).length,1);
+});
+test('Newer and corrupted databases or backups are rejected safely',()=>{
+  const future=fixture().file;let store=new Store(future,root);store.close();
+  const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(future);db.exec(`PRAGMA user_version=${CURRENT_SCHEMA_VERSION+1}`);db.close();
+  assert.throws(()=>new Store(future,root),/newer TaxGuard release/);
+  assert.throws(()=>Store.validateBackup(future),/unsupported schema version/);
+  const corrupt=fixture().file;fs.writeFileSync(corrupt,Buffer.from('not a sqlite database'));
+  assert.throws(()=>new Store(corrupt,root),/Database could not be opened safely|integrity check failed/);
+  assert.throws(()=>Store.validateBackup(corrupt),/Backup could not be opened safely|integrity check/);
+});
 function fixture(){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'taxguard-db-test-'));return {dir,file:path.join(dir,'taxguard.db')}}
+function setupAdmin(store,company='EOO Tax & Accounting'){return store.setupAdministrator({company_name:company,username:'admin',password:'taxguard2026'})}
 const client={id:1,name:'Test client',tin:'123-456-789-000',type:'Corporation',tax:'VAT',status:'Active',start:'2025-01-01',remarks:'Test',forms:['2550-Q']};
+test('Server sessions are scoped, hashed, sliding, revocable, and require an active account',()=>{
+  const store=new Store(fixture().file,root);setupAdmin(store);
+  try{
+    const browser=store.createSession('admin','browser'),electron=store.createSession('admin','electron');
+    assert.notEqual(browser,electron);
+    assert.deepEqual(store.requireSession(browser,'browser').scope,'browser');
+    assert.deepEqual(store.requireSession(electron,'electron').scope,'electron');
+    assert.throws(()=>store.requireSession(browser,'electron'),/Session expired/);
+    assert.throws(()=>store.requireSession('invalid','browser'),/Authentication required/);
+    assert.equal(store.db.prepare('SELECT COUNT(*) n FROM auth_sessions WHERE token_hash=?').get(browser).n,0);
+    const row=store.db.prepare("SELECT expires_at FROM auth_sessions WHERE scope='browser'").get();
+    assert.throws(()=>store.requireSession(browser,'browser',row.expires_at+1),/Session expired/);
+    const replacement=store.createSession('admin','browser');
+    assert.equal(store.revokeSession(replacement,'browser'),true);
+    assert.throws(()=>store.requireSession(replacement,'browser'),/Session expired/);
+    const inactive=store.createSession('admin','browser');
+    store.db.prepare("UPDATE users SET is_active=0 WHERE username='admin'").run();
+    assert.throws(()=>store.requireSession(inactive,'browser'),/Authentication required/);
+  }finally{store.close();}
+});
+test('Staff sessions can work with records but cannot perform administrator operations',()=>{
+  const store=new Store(fixture().file,root);setupAdmin(store);
+  try{
+    store.saveUser({username:'staff',company_name:'EOO Tax & Accounting',role:'Staff',password:'staff123'});
+    const token=store.createSession('staff','browser');
+    assert.equal(store.authorizeSession(token,'browser','load').role,'Staff');
+    assert.equal(store.authorizeSession(token,'browser','save').role,'Staff');
+    assert.equal(store.authorizeSession(token,'browser','data:export').role,'Staff');
+    assert.equal(store.authorizeSession(token,'browser','backup:save').role,'Staff');
+    for(const action of ['users:list','users:save','company:profile:save','forms','data:import','clients:fields:save','calendar:save','backup:restore','audit:list']){
+      assert.throws(()=>store.authorizeSession(token,'browser',action),/Administrator access is required/,action);
+    }
+  }finally{store.close();}
+});
+test('Audit log records successful changes without passwords or document contents',()=>{
+  const store=new Store(fixture().file,root);setupAdmin(store);
+  try{
+    const token=store.createSession('admin','browser'),session=store.authorizeSession(token,'browser','save'),before=store.auditSnapshot('save');
+    const next={clients:[client],filings:{}};store.saveState(next,before.revision);store.recordAudit(session,'save',next,before);
+    store.recordAudit(session,'users:save',{username:'staff',role:'Staff',password:'never-log-this',profile_photo:'data:image/png;base64,SECRET'});
+    const rows=store.getAuditLogs({username:'adm'});
+    assert.equal(rows.length,2);assert.equal(rows[0].username,'admin');assert.equal(rows[1].summary.clientsAdded[0],1);
+    assert.equal(JSON.stringify(rows).includes('never-log-this'),false);assert.equal(JSON.stringify(rows).includes('SECRET'),false);
+    assert.equal(store.getAuditLogs({action:'save'}).length,1);
+  }finally{store.close();}
+});
 test('Years outside the old range save, reopen, and retain deadline edits',()=>{
   const {file}=fixture();let s=new Store(file,root);
   const filings={};
@@ -279,6 +353,10 @@ test('Two connections reject stale writes without overwriting newer data',()=>{
 });
 test('Store authenticates valid company credentials and rejects invalid credentials',()=>{
   const {file}=fixture(),s=new Store(file,root);
+  assert.deepEqual(s.authStatus(),{needsSetup:true,company:'TaxGuard'});
+  setupAdmin(s);
+  assert.equal(s.authStatus().needsSetup,false);
+  assert.throws(()=>setupAdmin(s),/already been completed/);
   const result=s.login('admin','taxguard2026');
   assert.equal(result.authenticated,true);
   assert.equal(result.company,'EOO Tax & Accounting');
@@ -288,8 +366,25 @@ test('Store authenticates valid company credentials and rejects invalid credenti
   assert.throws(()=>s.login('','taxguard2026'),/Username is required/);
   s.close();
 });
+test('Passwords use salted scrypt and legacy SHA-256 hashes upgrade after login',()=>{
+  const {file}=fixture(),s=new Store(file,root);setupAdmin(s);
+  const adminHash=s.db.prepare("SELECT password_hash FROM users WHERE username='admin'").get().password_hash;
+  assert.match(adminHash,/^scrypt\$16384\$8\$1\$/);
+  s.saveUser({username:'staff',company_name:'EOO Tax & Accounting',role:'Staff',password:'taxguard2026'});
+  const staffHash=s.db.prepare("SELECT password_hash FROM users WHERE username='staff'").get().password_hash;
+  assert.match(staffHash,/^scrypt\$16384\$8\$1\$/);assert.notEqual(staffHash,adminHash,'Equal passwords must have different salts');
+  const legacy=crypto.createHash('sha256').update('legacy-pass').digest('hex');
+  s.db.prepare("UPDATE users SET password_hash=? WHERE username='staff'").run(legacy);
+  assert.throws(()=>s.login('staff','wrong-pass'),/Invalid username or password/);
+  assert.equal(s.db.prepare("SELECT password_hash FROM users WHERE username='staff'").get().password_hash,legacy,'Failed login must not change the hash');
+  assert.equal(s.login('staff','legacy-pass').authenticated,true);
+  const upgraded=s.db.prepare("SELECT password_hash FROM users WHERE username='staff'").get().password_hash;
+  assert.match(upgraded,/^scrypt\$16384\$8\$1\$/);assert.notEqual(upgraded,legacy);
+  s.close();
+});
 test('Company name setting updates the workspace and every login account',()=>{
   const {file}=fixture(),s=new Store(file,root);
+  setupAdmin(s);
   const logo='data:image/png;base64,iVBORw0KGgo=';
   s.saveUser({username:'staff',company_name:'Old name',role:'Staff',password:'secret1'});
   assert.deepEqual(s.saveCompanyProfile({name:'New Firm & Associates',logo,description:'Tax and accounting services'}),{name:'New Firm & Associates',logo,description:'Tax and accounting services'});
@@ -309,6 +404,9 @@ test('Landing page contains no sqlite references and enforces session-only sign 
   assert.equal(html.includes('<body class="logged-out">'),true,'Workspace must be hidden before scripts initialize');
   const loginSection=html.slice(html.indexOf('<section id="login-landing"'),html.indexOf('</section>'));
   assert.equal(/sqlite/i.test(loginSection),false,'Landing page must not contain SQLite references');
+  assert.equal(html.includes('id="setup-form"'),true,'First-run administrator form is required');
+  assert.equal(html.includes('Fill demo credentials'),false,'Production login must not offer demo credentials');
+  assert.equal(html.includes('<code>taxguard2026</code>'),false,'Production login must not display a known password');
   const appJs=fs.readFileSync(path.join(root,'app.js'),'utf8');
   assert.equal(appJs.includes("localStorage.removeItem('taxguard_auth')"),true);
   assert.equal(appJs.includes("sessionStorage.getItem('taxguard_auth')"),true);
@@ -386,7 +484,7 @@ test('Report preview saves PDF directly without triggering print dialog prompt',
   // Verify preview-save-pdf no longer calls window.print()
   assert.equal(dbUiJs.includes("m.querySelector('#preview-save-pdf')?.addEventListener('click',()=>window.print())"),false);
   const preloadCjs=fs.readFileSync(path.join(root,'desktop/preload.cjs'),'utf8');
-  assert.equal(preloadCjs.includes("savePdf:(defaultName)=>ipcRenderer.invoke('report:savePdf',defaultName)"),true);
+  assert.equal(preloadCjs.includes("savePdf:(defaultName)=>ipcRenderer.invoke('report:savePdf',defaultName,sessionToken)"),true);
   const mainCjs=fs.readFileSync(path.join(root,'desktop/main.cjs'),'utf8');
   assert.equal(mainCjs.includes("ipcMain.handle('report:savePdf'"),true);
   assert.equal(mainCjs.includes('printToPDF'),true);
@@ -416,6 +514,7 @@ test('TaxGuard shield logo is configured as desktop window icon and Windows exe 
 test('User account management: create new users, edit current user, safeguards, and multi-user login',()=>{
   const {file}=fixture();
   const s=new Store(file,root);
+  setupAdmin(s);
   const initialUsers=s.getUsers();
   assert.equal(initialUsers.length >= 1, true);
   const adminUser=initialUsers.find(u=>u.username.toLowerCase()==='admin');
@@ -487,6 +586,7 @@ test('User account management: create new users, edit current user, safeguards, 
 test('Each user profile picture persists separately and can be removed',()=>{
   const {file}=fixture();
   let store=new Store(file,root);
+  setupAdmin(store);
   const photo='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/6yQAAAAASUVORK5CYII=';
   try{
     const admin=store.getUsers().find(u=>u.username==='admin');

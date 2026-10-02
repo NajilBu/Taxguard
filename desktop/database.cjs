@@ -4,8 +4,32 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const {parseCsv}=require('./migration.cjs');
 
+const SCRYPT_N=16384,SCRYPT_R=8,SCRYPT_P=1,SCRYPT_BYTES=64;
+const SESSION_IDLE_MS=30*60*1000;
+const CURRENT_SCHEMA_VERSION=5;
+const ADMIN_ACTIONS=new Set(['users:list','users:save','users:delete','company:save','company:profile:save','forms','data:preview-import','data:import','data:read-xlsx','clients:import-csv','clients:import-xlsx','clients:fields:save','clients:fields:rename','calendar:save','calendar:delete','records:import','backup:restore','audit:list']);
+const AUDITED_ACTIONS=new Set(['save','forms','users:save','users:delete','company:save','company:profile:save','documents:save','documents:delete','data:import','clients:import-csv','clients:import-xlsx','clients:fields:save','clients:fields:rename','calendar:save','calendar:delete','records:import','backup:restore']);
+function legacyPasswordHash(password){return crypto.createHash('sha256').update(String(password)).digest('hex')}
 function hashPassword(password) {
-  return crypto.createHash('sha256').update(String(password)).digest('hex');
+  const salt=crypto.randomBytes(16),derived=crypto.scryptSync(String(password),salt,SCRYPT_BYTES,{N:SCRYPT_N,r:SCRYPT_R,p:SCRYPT_P});
+  return `scrypt$${SCRYPT_N}$${SCRYPT_R}$${SCRYPT_P}$${salt.toString('base64')}$${derived.toString('base64')}`;
+}
+function verifyPassword(password,stored){
+  if(typeof stored!=='string')return {valid:false,needsUpgrade:false};
+  if(/^[a-f0-9]{64}$/i.test(stored)){
+    const actual=Buffer.from(legacyPasswordHash(password),'hex'),expected=Buffer.from(stored,'hex');
+    return {valid:actual.length===expected.length&&crypto.timingSafeEqual(actual,expected),needsUpgrade:true};
+  }
+  const parts=stored.split('$');
+  if(parts.length!==6||parts[0]!=='scrypt')return {valid:false,needsUpgrade:false};
+  const n=Number(parts[1]),r=Number(parts[2]),p=Number(parts[3]);
+  if(n!==SCRYPT_N||r!==SCRYPT_R||p!==SCRYPT_P)return {valid:false,needsUpgrade:false};
+  try{
+    const salt=Buffer.from(parts[4],'base64'),expected=Buffer.from(parts[5],'base64');
+    if(salt.length!==16||expected.length!==SCRYPT_BYTES)return {valid:false,needsUpgrade:false};
+    const actual=crypto.scryptSync(String(password),salt,expected.length,{N:n,r,p});
+    return {valid:crypto.timingSafeEqual(actual,expected),needsUpgrade:false};
+  }catch{return {valid:false,needsUpgrade:false}}
 }
 
 function date(value) {
@@ -26,38 +50,49 @@ function scheduleDate(f, period, year) {
 class Store {
   constructor(filename, root) {
     fs.mkdirSync(path.dirname(filename), {recursive:true});
-    this.db = new DatabaseSync(filename);
-    this.db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;');
-    this.db.exec(fs.readFileSync(path.join(root,'database/schema.sql'),'utf8'));
-    if(!this.db.prepare('PRAGMA table_info(users)').all().some(c=>c.name==='profile_photo'))
-      this.db.exec("ALTER TABLE users ADD COLUMN profile_photo TEXT NOT NULL DEFAULT ''");
-    if(!this.db.prepare('PRAGMA table_info(clients)').all().some(c=>c.name==='pulled_out_at'))
-      this.db.exec('ALTER TABLE clients ADD COLUMN pulled_out_at TEXT');
-    if(!this.db.prepare('PRAGMA table_info(clients)').all().some(c=>c.name==='service_history_json'))
-      this.db.exec("ALTER TABLE clients ADD COLUMN service_history_json TEXT NOT NULL DEFAULT '[]'");
-    if(!this.db.prepare('PRAGMA table_info(clients)').all().some(c=>c.name==='custom_fields_json'))
-      this.db.exec("ALTER TABLE clients ADD COLUMN custom_fields_json TEXT NOT NULL DEFAULT '{}'");
-    const cols=this.db.prepare('PRAGMA table_info(forms)').all();
-    if(!cols.some(c=>c.name==='schedule_json')) this.db.exec("ALTER TABLE forms ADD COLUMN schedule_json TEXT NOT NULL DEFAULT '{}'");
-    this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS unique_client_deadline ON filings(client_id,deadline_id); PRAGMA user_version=1;');
-    this.db.exec("CREATE TABLE IF NOT EXISTS workspace_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL); INSERT OR IGNORE INTO workspace_meta VALUES('revision','0');");
-    this.db.exec('CREATE TABLE IF NOT EXISTS client_year_profiles(client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,tax_year INTEGER NOT NULL,profile_json TEXT NOT NULL,PRIMARY KEY(client_id,tax_year));');
+    const existed=fs.existsSync(filename)&&fs.statSync(filename).size>0;
+    this.filename=filename;this.db = new DatabaseSync(filename);
+    try{
+      this.db.exec('PRAGMA busy_timeout=5000;');
+      const integrity=this.db.prepare('PRAGMA integrity_check').get()?.integrity_check;
+      if(integrity!=='ok')throw Error(`Database integrity check failed: ${integrity||'unknown SQLite error'}. Restore a known-good backup.`);
+      this.db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;');
+      const version=Number(this.db.prepare('PRAGMA user_version').get().user_version||0);
+      if(version>CURRENT_SCHEMA_VERSION)throw Error(`This database uses schema version ${version}, but this TaxGuard release supports up to version ${CURRENT_SCHEMA_VERSION}. Install a newer TaxGuard release.`);
+      if(existed&&version<CURRENT_SCHEMA_VERSION)this.migrationBackupPath=this.createMigrationBackup(version,CURRENT_SCHEMA_VERSION);
+      for(let next=version+1;next<=CURRENT_SCHEMA_VERSION;next++)this.applyMigration(next,root);
+    }catch(error){try{this.db.close()}catch{}throw Error(error.message.startsWith('Database')||error.message.startsWith('This database')?error.message:`Database could not be opened safely: ${error.message}`);}
     const defaults=JSON.parse(fs.readFileSync(path.join(root,'database/default-forms.json'),'utf8'));
     const insert=this.db.prepare('INSERT OR IGNORE INTO forms(code,name,frequency,schedule_json) VALUES(?,?,?,?)');
     const fill=this.db.prepare("UPDATE forms SET schedule_json=? WHERE code=? AND schedule_json='{}'");
     let changed=false;
     for(const f of defaults){changed=!!insert.run(f.id,f.name,f.frequency,JSON.stringify(f)).changes||changed;changed=!!fill.run(JSON.stringify(f),f.id).changes||changed;}
     if(changed||!this.db.prepare('SELECT id FROM deadlines LIMIT 1').get())this.saveForms(this.load().forms);
-    const companyCount=this.db.prepare('SELECT COUNT(*) n FROM company_login').get()?.n;
-    if(!companyCount){
-      this.db.prepare('INSERT OR IGNORE INTO company_login(id,company_name,username,password_hash,is_active) VALUES(1,?,?,?,1)')
-        .run('EOO Tax & Accounting','admin',hashPassword('taxguard2026'));
-    }
-    const userCount=this.db.prepare('SELECT COUNT(*) n FROM users').get()?.n;
-    if(!userCount){
-      this.db.prepare('INSERT OR IGNORE INTO users(username,company_name,role,password_hash,is_active) VALUES(?,?,?,?,1)')
-        .run('admin','EOO Tax & Accounting','Admin',hashPassword('taxguard2026'));
-    }
+  }
+  createMigrationBackup(from,to){
+    const stamp=new Date().toISOString().replace(/[:.]/g,'-'),target=`${this.filename}.pre-migration-v${from}-to-v${to}-${stamp}.db`;
+    this.db.exec("VACUUM INTO '"+target.replace(/'/g,"''")+"'");
+    Store.validateBackup(target,{allowUnversioned:true});
+    return target;
+  }
+  applyMigration(version,root){
+    const hasColumn=(table,column)=>this.db.prepare(`PRAGMA table_info(${table})`).all().some(item=>item.name===column);
+    this.db.exec('BEGIN IMMEDIATE');
+    try{
+      if(version===1)this.db.exec(fs.readFileSync(path.join(root,'database/schema.sql'),'utf8'));
+      else if(version===2){
+        if(!hasColumn('users','profile_photo'))this.db.exec("ALTER TABLE users ADD COLUMN profile_photo TEXT NOT NULL DEFAULT ''");
+        if(!hasColumn('clients','pulled_out_at'))this.db.exec('ALTER TABLE clients ADD COLUMN pulled_out_at TEXT');
+        if(!hasColumn('clients','service_history_json'))this.db.exec("ALTER TABLE clients ADD COLUMN service_history_json TEXT NOT NULL DEFAULT '[]'");
+        if(!hasColumn('clients','custom_fields_json'))this.db.exec("ALTER TABLE clients ADD COLUMN custom_fields_json TEXT NOT NULL DEFAULT '{}'");
+        if(!hasColumn('forms','schedule_json'))this.db.exec("ALTER TABLE forms ADD COLUMN schedule_json TEXT NOT NULL DEFAULT '{}'");
+        this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS unique_client_deadline ON filings(client_id,deadline_id); CREATE TABLE IF NOT EXISTS workspace_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL); INSERT OR IGNORE INTO workspace_meta VALUES('revision','0'); CREATE TABLE IF NOT EXISTS client_year_profiles(client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,tax_year INTEGER NOT NULL,profile_json TEXT NOT NULL,PRIMARY KEY(client_id,tax_year));");
+      }else if(version===3)this.db.exec("CREATE TABLE IF NOT EXISTS client_documents(id INTEGER PRIMARY KEY AUTOINCREMENT,client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,filing_key TEXT NOT NULL DEFAULT '',filename TEXT NOT NULL,mime_type TEXT NOT NULL,content_base64 TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP); CREATE INDEX IF NOT EXISTS idx_client_documents_client ON client_documents(client_id); CREATE TABLE IF NOT EXISTS calendar_rules(id INTEGER PRIMARY KEY AUTOINCREMENT,rule_type TEXT NOT NULL CHECK(rule_type IN ('holiday','extension')),rule_date TEXT NOT NULL,label TEXT NOT NULL DEFAULT '',form_code TEXT NOT NULL DEFAULT '',tax_year INTEGER NOT NULL DEFAULT 0,period TEXT NOT NULL DEFAULT '',adjusted_due TEXT NOT NULL DEFAULT '',source_url TEXT NOT NULL DEFAULT '');");
+      else if(version===4)this.db.exec("CREATE TABLE IF NOT EXISTS auth_sessions(token_hash TEXT PRIMARY KEY,username TEXT NOT NULL,scope TEXT NOT NULL CHECK(scope IN ('electron','browser')),expires_at INTEGER NOT NULL,last_seen INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at);");
+      else if(version===5)this.db.exec("CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY AUTOINCREMENT,occurred_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,username TEXT NOT NULL,role TEXT NOT NULL,action TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL DEFAULT '',summary_json TEXT NOT NULL DEFAULT '{}'); CREATE INDEX IF NOT EXISTS idx_audit_log_time ON audit_log(occurred_at DESC); CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(username); CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);");
+      else throw Error('Missing database migration '+version+'.');
+      this.db.exec(`PRAGMA user_version=${version}; COMMIT`);
+    }catch(error){try{this.db.exec('ROLLBACK')}catch{}throw Error(`Database migration ${version} failed: ${error.message}`);}
   }
   load() {
     const forms=this.db.prepare('SELECT * FROM forms ORDER BY id').all().map(f=>({...JSON.parse(f.schedule_json),id:f.code,name:f.name,frequency:f.frequency}));
@@ -188,10 +223,95 @@ class Store {
   getCompanyProfile(){
     const name=this.db.prepare("SELECT value FROM workspace_meta WHERE key='company_name'").get()?.value
       ||this.db.prepare('SELECT company_name FROM users ORDER BY id LIMIT 1').get()?.company_name
-      ||'EOO Tax & Accounting';
+      ||'TaxGuard';
     const logo=this.db.prepare("SELECT value FROM workspace_meta WHERE key='company_logo'").get()?.value||'';
     const description=this.db.prepare("SELECT value FROM workspace_meta WHERE key='company_description'").get()?.value||'';
     return {name,logo,description};
+  }
+  authStatus(){
+    const users=this.db.prepare('SELECT COUNT(*) n FROM users').get()?.n||0;
+    const legacy=this.db.prepare('SELECT COUNT(*) n FROM company_login').get()?.n||0;
+    return {needsSetup:users===0&&legacy===0,company:this.getCompanyName()};
+  }
+  createSession(username,scope){
+    if(!['electron','browser'].includes(scope))throw Error('Invalid session scope.');
+    const user=this.db.prepare('SELECT username,is_active FROM users WHERE LOWER(username)=LOWER(?)').get(String(username||''))
+      ||this.db.prepare('SELECT username,is_active FROM company_login WHERE LOWER(username)=LOWER(?)').get(String(username||''));
+    if(!user||user.is_active!==1)throw Error('Cannot create a session for this account.');
+    const token=crypto.randomBytes(32).toString('base64url'),now=Date.now(),tokenHash=crypto.createHash('sha256').update(token).digest('hex');
+    this.db.prepare('DELETE FROM auth_sessions WHERE expires_at<=?').run(now);
+    this.db.prepare('INSERT INTO auth_sessions(token_hash,username,scope,expires_at,last_seen) VALUES(?,?,?,?,?)').run(tokenHash,user.username,scope,now+SESSION_IDLE_MS,now);
+    return token;
+  }
+  requireSession(token,scope,now=Date.now()){
+    if(typeof token!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(token)||!['electron','browser'].includes(scope))throw Error('Authentication required.');
+    const tokenHash=crypto.createHash('sha256').update(token).digest('hex'),session=this.db.prepare('SELECT * FROM auth_sessions WHERE token_hash=? AND scope=?').get(tokenHash,scope);
+    if(!session||session.expires_at<=now){if(session)this.db.prepare('DELETE FROM auth_sessions WHERE token_hash=?').run(tokenHash);throw Error('Session expired. Sign in again.');}
+    const active=this.db.prepare('SELECT is_active,role FROM users WHERE LOWER(username)=LOWER(?)').get(session.username)
+      ||(()=>{const legacy=this.db.prepare('SELECT is_active FROM company_login WHERE LOWER(username)=LOWER(?)').get(session.username);return legacy?{...legacy,role:'Admin'}:null})();
+    if(!active||active.is_active!==1){this.db.prepare('DELETE FROM auth_sessions WHERE token_hash=?').run(tokenHash);throw Error('Authentication required.');}
+    this.db.prepare('UPDATE auth_sessions SET last_seen=?,expires_at=? WHERE token_hash=?').run(now,now+SESSION_IDLE_MS,tokenHash);
+    return {username:session.username,scope:session.scope,role:active.role||'Staff'};
+  }
+  authorizeSession(token,scope,action,now=Date.now()){
+    const session=this.requireSession(token,scope,now);
+    if(ADMIN_ACTIONS.has(action)&&session.role!=='Admin')throw Error('Administrator access is required for this action.');
+    return session;
+  }
+  auditSnapshot(action){return action==='save'?this.load():action==='forms'?this.load().forms:null;}
+  isAuditedAction(action){return AUDITED_ACTIONS.has(action);}
+  recordAudit(session,action,data,before=null){
+    if(!AUDITED_ACTIONS.has(action)||!session?.username)return false;
+    let entityType=action.split(':')[0],entityId='',summary={};
+    if(action==='save'){
+      const previousClients=new Map((before?.clients||[]).map(c=>[c.id,JSON.stringify(c)])),nextClients=new Map((data?.clients||[]).map(c=>[c.id,JSON.stringify(c)]));
+      const previousFilings=before?.filings||{},nextFilings=data?.filings||{};
+      summary={clientsAdded:[...nextClients].filter(([id])=>!previousClients.has(id)).map(([id])=>id),clientsChanged:[...nextClients].filter(([id,value])=>previousClients.has(id)&&previousClients.get(id)!==value).map(([id])=>id),clientsRemoved:[...previousClients].filter(([id])=>!nextClients.has(id)).map(([id])=>id),filingsChanged:[...new Set([...Object.keys(previousFilings),...Object.keys(nextFilings)])].filter(key=>JSON.stringify(previousFilings[key])!==JSON.stringify(nextFilings[key]))};
+      entityType='workspace';
+    }else if(action==='forms'){summary={formCodes:(data||[]).map(form=>form.id)};entityType='form';}
+    else if(action.startsWith('users:')){entityType='user';entityId=String(data?.id||data?.username||'');summary={username:data?.username,role:data?.role,is_active:data?.is_active};}
+    else if(action.startsWith('documents:')){entityType='document';entityId=String(data?.id||data?.clientId||'');summary={clientId:data?.clientId,filename:data?.filename,filingKey:data?.filingKey||''};}
+    else if(action.startsWith('company:')){entityType='company';summary={name:data?.name,descriptionChanged:data?.description!==undefined,logoChanged:data?.logo!==undefined};}
+    else if(action.startsWith('calendar:')){entityType='calendar';entityId=String(data?.id||'');summary={type:data?.rule_type,date:data?.rule_date,form:data?.form_code,period:data?.period};}
+    else if(action.startsWith('clients:fields')){entityType='client-field';summary={fields:data?.fields,oldName:data?.oldName,newName:data?.newName};}
+    else if(action.includes('import')){entityType='import';summary={sections:data?.sections||[],source:action};}
+    this.db.prepare('INSERT INTO audit_log(username,role,action,entity_type,entity_id,summary_json) VALUES(?,?,?,?,?,?)').run(session.username,session.role||'Staff',action,entityType,entityId,JSON.stringify(summary));
+    return true;
+  }
+  getAuditLogs(filters={}){
+    const clauses=[],params=[];
+    if(filters.username){clauses.push('LOWER(username) LIKE LOWER(?)');params.push(`%${String(filters.username).slice(0,100)}%`);}
+    if(filters.action){clauses.push('action=?');params.push(String(filters.action).slice(0,100));}
+    if(filters.from){clauses.push('occurred_at>=?');params.push(String(filters.from).slice(0,10)+' 00:00:00');}
+    if(filters.to){clauses.push('occurred_at<=?');params.push(String(filters.to).slice(0,10)+' 23:59:59');}
+    const rows=this.db.prepare(`SELECT id,occurred_at,username,role,action,entity_type,entity_id,summary_json FROM audit_log ${clauses.length?'WHERE '+clauses.join(' AND '):''} ORDER BY id DESC LIMIT 500`).all(...params);
+    return rows.map(row=>({...row,summary:JSON.parse(row.summary_json),summary_json:undefined}));
+  }
+  revokeSession(token,scope){
+    if(typeof token!=='string')return false;
+    const tokenHash=crypto.createHash('sha256').update(token).digest('hex');
+    return !!this.db.prepare('DELETE FROM auth_sessions WHERE token_hash=? AND scope=?').run(tokenHash,scope).changes;
+  }
+  revokeSessions(scope){
+    if(!['electron','browser'].includes(scope))throw Error('Invalid session scope.');
+    return this.db.prepare('DELETE FROM auth_sessions WHERE scope=?').run(scope).changes;
+  }
+  setupAdministrator(data){
+    if(!this.authStatus().needsSetup)throw Error('Administrator setup has already been completed.');
+    if(!data||typeof data!=='object')throw Error('Invalid administrator setup.');
+    const company=required(data.company_name,'Company name'),username=required(data.username,'Username');
+    required(data.password,'Password');const password=String(data.password);
+    if(company.length>120)throw Error('Company name must be 120 characters or fewer.');
+    if(username.length>100||!/^[a-zA-Z0-9._ -]+$/.test(username))throw Error('Username must be 100 characters or fewer and contain only letters, numbers, spaces, dots, dashes, or underscores.');
+    if(password.length<8)throw Error('Password must be at least 8 characters.');
+    this.transaction(()=>{
+      if(!this.authStatus().needsSetup)throw Error('Administrator setup has already been completed.');
+      const hash=hashPassword(password);
+      this.db.prepare('INSERT INTO company_login(id,company_name,username,password_hash,is_active) VALUES(1,?,?,?,1)').run(company,username,hash);
+      this.db.prepare("INSERT INTO users(username,company_name,role,password_hash,is_active) VALUES(?,?,\'Admin\',?,1)").run(username,company,hash);
+      this.db.prepare("INSERT INTO workspace_meta(key,value) VALUES('company_name',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(company);
+    });
+    return {created:true,username,company};
   }
   getClientFields(){
     return JSON.parse(this.db.prepare("SELECT value FROM workspace_meta WHERE key='client_fields'").get()?.value||'[]');
@@ -253,7 +373,7 @@ class Store {
     required(user.username,'Username');
     const u=user.username.trim();
     if(!/^[a-zA-Z0-9._ -]+$/.test(u))throw Error('Username must contain only letters, numbers, spaces, dots, dashes, or underscores.');
-    const company=(user.company_name||'EOO Tax & Accounting').trim();
+    const company=(user.company_name||'TaxGuard').trim();
     const validRoles=['Admin','Staff','Tax Associate','Auditor'];
     const role=validRoles.includes(user.role)?user.role:'Staff';
     const active=user.is_active!==undefined?(user.is_active?1:0):1;
@@ -311,13 +431,22 @@ class Store {
     required(username,'Username');
     required(password,'Password');
     const u=username.trim();
-    let user=this.db.prepare('SELECT id,company_name,username,role,password_hash,is_active,profile_photo FROM users WHERE LOWER(username)=LOWER(?)').get(u);
+    let source='users',user=this.db.prepare('SELECT id,company_name,username,role,password_hash,is_active,profile_photo FROM users WHERE LOWER(username)=LOWER(?)').get(u);
     if(!user){
       const old=this.db.prepare('SELECT id,company_name,username,password_hash,is_active FROM company_login WHERE LOWER(username)=LOWER(?)').get(u);
-      if(old)user={...old,role:'Admin'};
+      if(old){source='company_login';user={...old,role:'Admin'};}
     }
     if(!user||user.is_active!==1)throw Error('Invalid username or password.');
-    if(user.password_hash!==hashPassword(password))throw Error('Invalid username or password.');
+    const verified=verifyPassword(password,user.password_hash);
+    if(!verified.valid)throw Error('Invalid username or password.');
+    if(verified.needsUpgrade){
+      const upgraded=hashPassword(password);
+      this.transaction(()=>{
+        if(source==='users')this.db.prepare('UPDATE users SET password_hash=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND password_hash=?').run(upgraded,user.id,user.password_hash);
+        else this.db.prepare('UPDATE company_login SET password_hash=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND password_hash=?').run(upgraded,user.id,user.password_hash);
+        this.db.prepare('UPDATE company_login SET password_hash=?,updated_at=CURRENT_TIMESTAMP WHERE LOWER(username)=LOWER(?) AND password_hash=?').run(upgraded,user.username,user.password_hash);
+      });
+    }
     return {authenticated:true,company:this.getCompanyName(),username:user.username,role:user.role||'Admin',profile_photo:user.profile_photo||''};
   }
   importWorkspace(data){
@@ -381,14 +510,18 @@ class Store {
       return target;
     }finally{try{fs.unlinkSync(temporary)}catch{}}
   }
-  static validateBackup(filename){
-    const candidate=new DatabaseSync(filename,{readOnly:true});
+  static validateBackup(filename,options={}){
+    let candidate;
     try{
+      candidate=new DatabaseSync(filename,{readOnly:true});
       if(candidate.prepare('PRAGMA integrity_check').get().integrity_check!=='ok')throw Error('Backup failed SQLite integrity check.');
-      for(const name of ['clients','forms','filings','users','workspace_meta']){
+      const version=Number(candidate.prepare('PRAGMA user_version').get().user_version||0);
+      if(version>CURRENT_SCHEMA_VERSION)throw Error(`Backup uses unsupported schema version ${version}. This release supports up to version ${CURRENT_SCHEMA_VERSION}.`);
+      if(!options.allowUnversioned)for(const name of ['clients','forms','filings','users','workspace_meta']){
         if(!candidate.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name))throw Error('Backup is missing '+name+'.');
       }
-    }finally{candidate.close();}
+    }catch(error){throw Error(error.message.startsWith('Backup')?error.message:`Backup could not be opened safely: ${error.message}`);}
+    finally{try{candidate?.close()}catch{}}
     return true;
   }
   listClientDocuments(clientId){
@@ -421,4 +554,4 @@ class Store {
   }
   close(){this.db.close()}
 }
-module.exports={Store,scheduleDate};
+module.exports={Store,scheduleDate,CURRENT_SCHEMA_VERSION};

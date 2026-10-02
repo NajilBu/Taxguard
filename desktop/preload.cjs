@@ -1,20 +1,25 @@
 const {contextBridge,ipcRenderer}=require('electron');
-function call(action,data,revision){const result=ipcRenderer.sendSync('records:sync',action,data,revision);if(!result?.ok)throw Error(result?.error||'Database unavailable');return result.value;}
+let sessionToken='';
+function call(action,data,revision){const result=ipcRenderer.sendSync('records:sync',action,data,revision,sessionToken);if(!result?.ok){const message=result?.error||'Database unavailable';if(/Session expired|Authentication required/.test(message))window.dispatchEvent(new Event('taxguard-session-expired'));throw Error(message);}return result.value;}
 contextBridge.exposeInMainWorld('taxguardDB',{
   load:()=>call('load'),
-  login:(username,password)=>call('login',{username,password}),
+  authStatus:()=>call('auth:status'),
+  setupAdministrator:(data)=>call('auth:setup',data),
+  login:(username,password)=>{const result=call('login',{username,password});sessionToken=result.sessionToken;return result;},
+  setSessionToken:(token)=>{sessionToken=String(token||'');},
+  logout:()=>{try{return call('logout')}finally{sessionToken='';}},
   save:(state,revision)=>call('save',state,revision),
   saveForms:(forms,revision)=>call('forms',forms,revision),
-  importRecords:()=>ipcRenderer.invoke('records:import'),
+  importRecords:()=>ipcRenderer.invoke('records:import',sessionToken),
   exportData:(sections)=>call('data:export',{sections}),
-  exportDataXlsx:(sections,options)=>ipcRenderer.invoke('data:export-xlsx',sections,options),
-  saveDataXlsx:(sections,options)=>ipcRenderer.invoke('data:save-xlsx',sections,options),
-  readDataXlsx:(base64)=>ipcRenderer.invoke('data:read-xlsx',base64),
+  exportDataXlsx:(sections,options)=>ipcRenderer.invoke('data:export-xlsx',sections,options,sessionToken),
+  saveDataXlsx:(sections,options)=>ipcRenderer.invoke('data:save-xlsx',sections,options,sessionToken),
+  readDataXlsx:(base64)=>ipcRenderer.invoke('data:read-xlsx',base64,sessionToken),
   previewDataImport:(payload,sections)=>call('data:preview-import',{payload,sections}),
   importData:(payload,sections,revision)=>call('data:import',{payload,sections},revision),
-  saveBackup:()=>ipcRenderer.invoke('backup:save'),
-  restoreBackup:()=>ipcRenderer.invoke('backup:restore'),
-  savePdf:(defaultName)=>ipcRenderer.invoke('report:savePdf',defaultName),
+  saveBackup:()=>ipcRenderer.invoke('backup:save',sessionToken),
+  restoreBackup:()=>ipcRenderer.invoke('backup:restore',sessionToken),
+  savePdf:(defaultName)=>ipcRenderer.invoke('report:savePdf',defaultName,sessionToken),
   getUsers:()=>call('users:list'),
   saveUser:(userData)=>call('users:save',userData),
   deleteUser:(id)=>call('users:delete',{id}),
@@ -27,11 +32,12 @@ contextBridge.exposeInMainWorld('taxguardDB',{
   getClientDocument:(id)=>call('documents:get',{id}),
   deleteClientDocument:(id)=>call('documents:delete',{id}),
   importClientsCsv:(text)=>call('clients:import-csv',{text}),
-  importClientsXlsx:(base64)=>ipcRenderer.invoke('clients:import-xlsx',base64),
+  importClientsXlsx:(base64)=>ipcRenderer.invoke('clients:import-xlsx',base64,sessionToken),
   getClientFields:()=>call('clients:fields:get'),
   saveClientFields:(fields)=>call('clients:fields:save',{fields}),
   renameClientField:(oldName,newName,revision)=>call('clients:fields:rename',{oldName,newName},revision),
   getCalendarRules:()=>call('calendar:list'),
   saveCalendarRule:(rule)=>call('calendar:save',rule),
-  deleteCalendarRule:(id)=>call('calendar:delete',{id})
+  deleteCalendarRule:(id)=>call('calendar:delete',{id}),
+  getAuditLogs:(filters)=>call('audit:list',filters)
 });

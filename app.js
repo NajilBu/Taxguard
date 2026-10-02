@@ -17,15 +17,15 @@ const forms=[
   {id:'1702-RT',name:'Annual income tax · Regular-rate corporations',periods:['Annual'],dates:['04-15'],frequency:'Annual'}
 ];
 const database=window.taxguardDB;
-const databaseSnapshot=database?database.load():null;
+const databaseSnapshot=null;
 let customClientFields=[];
-try{customClientFields=database?.getClientFields?.()||JSON.parse(localStorage.getItem('taxguard-client-fields')||'[]');}catch{}
+try{customClientFields=!database?JSON.parse(localStorage.getItem('taxguard-client-fields')||'[]'):[];}catch{}
 let calendarRules=[];
-try{calendarRules=database?.getCalendarRules?.()||JSON.parse(localStorage.getItem('taxguard-calendar-rules')||'[]');}catch{}
+try{calendarRules=!database?JSON.parse(localStorage.getItem('taxguard-calendar-rules')||'[]'):[];}catch{}
 let databaseRevision=databaseSnapshot?.revision;
 if(databaseSnapshot)forms.splice(0,forms.length,...databaseSnapshot.forms);
 const initial=[{id:1,name:'Dela Cruz Trading',tin:'000-000-001-000',type:'Sole proprietorship',status:'Active',tax:'VAT',start:'2021-01-01',forms:['1701-Q','2550-Q','1701']},{id:2,name:'Marcedonio Photography',tin:'000-000-002-000',type:'Sole proprietorship',status:'Active',tax:'NVAT',start:'2022-01-01',forms:['1701-Q','2551-Q','1701']},{id:3,name:'Santos Retail Corporation',tin:'000-000-003-000',type:'Corporation',status:'Active',tax:'VAT',start:'2023-01-01',forms:['2550-Q','1601-C','1702']},{id:4,name:'Abundant Enterprises Co.',tin:'000-000-004-000',type:'Partnership',status:'Active',tax:'VAT',start:'2023-03-08',forms:['2550-Q','1702']},{id:5,name:'Acuña, Jennifer Delgado',tin:'000-000-005-000',type:'Sole proprietorship',status:'For closure',tax:'VAT',start:'2023-09-29',forms:['1701-Q','2550-Q','1601-C','1701']},{id:6,name:'Adamos, Robert Bryan Ramos',tin:'000-000-006-000',type:'Sole proprietorship',status:'Active',tax:'NVAT',start:'2020-03-09',forms:['1701-Q','2551-Q','1701']}];
-let state;try{state=JSON.parse(localStorage.getItem('taxguard-workspace-v1'))}catch{}if(databaseSnapshot)state={clients:databaseSnapshot.clients,filings:databaseSnapshot.filings};if(!state)state={clients:initial,filings:{}};let page='dashboard',year=new Date().getFullYear(),query='',filter='unfiled',periodFilter='all';let clientTaxFilter='all',clientBusinessFilter='all',clientSort='az';let trackerPage=1;const pageSize=10;let today=localDate();
+let state;try{if(!database)state=JSON.parse(localStorage.getItem('taxguard-workspace-v1'))}catch{}if(databaseSnapshot)state={clients:databaseSnapshot.clients,filings:databaseSnapshot.filings};if(!state)state={clients:database?[]:initial,filings:{}};let page='dashboard',year=new Date().getFullYear(),query='',filter='unfiled',periodFilter='all';let clientTaxFilter='all',clientBusinessFilter='all',clientSort='az';let trackerPage=1;const pageSize=10;let today=localDate();
 function baseDue(f,p,y){if(f.overrides?.[y]?.[p])return f.overrides[y][p];let i=f.periods.indexOf(p);if(/^\d{4}-\d{2}-\d{2}$/.test(f.dates[i]||''))return f.dates[i];if(f.frequency==='Monthly'||f.id==='1601-C'||f.id==='0619-E')return `${i===11?y+1:y}-${String(i===11?1:i+2).padStart(2,'0')}-${i===11?'15':'10'}`;return `${p==='Annual'||p==='Q4'?y+1:y}-${f.dates[i]}`}
 function due(f,p,y){
   const scheduled=baseDue(f,p,y);
@@ -98,13 +98,16 @@ function clientFiveYearSummary(id,endingYear){
 if(!database&&!localStorage.getItem('taxguard-workspace-v1')){for(const y of [2024,2025,2026]){year=y;obligations().forEach((o,i)=>{if((y<2026||o.due<'2026-09-01')&&i%5!==0)state.filings[o.key]={date:o.due,reference:`TG-${y}-${String(i+1).padStart(4,'0')}`,remarks:'Sample submission'};})}year=new Date().getFullYear();save()}
 function closeModal(m,afterClose){if(!m)return;clearTimeout(m.workspaceCloseTimer);if(m.classList.contains('closing')){try{m.close();}catch(e){}m.classList.remove('closing');if(afterClose)afterClose();return;}m.classList.add('closing');m.workspaceCloseTimer=setTimeout(()=>{try{m.close();}catch(e){}m.classList.remove('closing');if(afterClose)afterClose();},180)}
 function restoreDatabase(){const saved=database.load();databaseRevision=saved.revision;state={clients:saved.clients,filings:saved.filings};forms.splice(0,forms.length,...saved.forms);}
+function loadAuthenticatedWorkspace(){if(!database)return;restoreDatabase();customClientFields=database.getClientFields?.()||[];calendarRules=database.getCalendarRules?.()||[];}
 function save(){try{if(database)databaseRevision=database.save(state,databaseRevision);else localStorage.setItem('taxguard-workspace-v1',JSON.stringify(state));}catch(error){if(database)restoreDatabase();notify('Not saved: '+error.message);throw error;}}
 function saveForms(){try{if(database)databaseRevision=database.saveForms(forms,databaseRevision);else localStorage.setItem('taxguard-custom-forms',JSON.stringify(forms));}catch(error){if(database)restoreDatabase();notify('Not saved: '+error.message);throw error;}}
 function notify(t){let e=document.querySelector('#toast');if(!e)return;const isError=/error|fail|cannot|invalid|already exists|not saved/i.test(t),isWarning=/warning|alert|require|must/i.test(t),icon=isError?'⚠️':isWarning?'⚡':'✓';e.innerHTML=`<span class="toast-icon">${icon}</span><span class="toast-text">${esc(t)}</span>`;e.className=isError?'toast-error':isWarning?'toast-warning':'toast-success';if(e._toastTimeout)clearTimeout(e._toastTimeout);if(e._hideTimeout)clearTimeout(e._hideTimeout);const supportsPopover=typeof e.showPopover==='function';if(supportsPopover){try{if(e.matches(':popover-open'))e.hidePopover();}catch(err){}try{e.showPopover();}catch(err){e.style.display='flex';}}else{e.style.display='flex';}requestAnimationFrame(()=>{e.classList.add('toast-visible');});e._toastTimeout=setTimeout(()=>{e.classList.remove('toast-visible');e._hideTimeout=setTimeout(()=>{if(supportsPopover){try{e.hidePopover();}catch(err){}}e.style.display='none';},220);},3200);}
 const modalEl=document.querySelector('#modal');if(modalEl){const origShowModal=modalEl.showModal.bind(modalEl);modalEl.showModal=function(){origShowModal();const toast=document.querySelector('#toast');if(toast&&typeof toast.showPopover==='function'&&toast.classList.contains('toast-visible')){try{toast.hidePopover();toast.showPopover();}catch(e){}}};}
 const badge=s=>`<span class="badge ${s.toLowerCase().replaceAll(' ','-')}">${esc(s)}</span>`;const clientCell=c=>`<div class="client-cell"><span class="client-icon">${esc(c.name.split(' ').slice(0,2).map(x=>x[0]).join(''))}</span><div><strong>${esc(c.name)}</strong><small>${esc(c.type)}</small></div></div>`;
 function yearSelect(){return `<input type="number" aria-label="Tax year" title="Tax year" id="year" min="1000" max="9998" step="1" value="${year}" style="width:110px">`}
-function heading(title,desc,action=''){const deadlineButton=title==='Deadline reference'?'<button class="btn primary" id="add-deadline">＋ Add deadline</button>':'';return `<div class="page-title"><div><div class="eyebrow">YOUR COMPLIANCE WORKSPACE</div><h1>${title}</h1><p>${desc}</p></div><div class="controls">${yearSelect()}${action}${deadlineButton}</div></div>`}
+function currentUserRole(){try{return JSON.parse(sessionStorage.getItem('taxguard_auth')||'{}').role||''}catch{return ''}}
+function isAdministrator(){return currentUserRole()==='Admin'}
+function heading(title,desc,action=''){const deadlineButton=title==='Deadline reference'&&isAdministrator()?'<button class="btn primary" id="add-deadline">＋ Add deadline</button>':'';return `<div class="page-title"><div><div class="eyebrow">YOUR COMPLIANCE WORKSPACE</div><h1>${title}</h1><p>${desc}</p></div><div class="controls">${yearSelect()}${action}${deadlineButton}</div></div>`}
 
 function updateDashboardClock() {
   const clock=document.querySelector('.dashboard-clock');
@@ -194,7 +197,7 @@ function pulloutPage(){
   return heading('PULLOUT','Clients whose service ended. Historical filings remain available.','<button class="btn" data-go="clients">← Client directory</button>')+`<div class="panel"><div class="table-scroll"><table><thead><tr><th>Client</th><th>TIN</th><th>Service ended</th><th>Last assigned forms</th></tr></thead><tbody>${archived.map(c=>`<tr class="client-row" data-client="${c.id}"><td>${clientCell(c)}</td><td>${esc(c.tin)}</td><td>${esc(c.pulledOutAt||'—')}</td><td>${(c.forms||[]).map(esc).join(', ')}</td></tr>`).join('')||'<tr><td colspan="4" class="empty">No clients have been pulled out.</td></tr>'}</tbody></table></div></div>`;
 }
 function calendarRulesPanel(){
-  return `<div class="panel" style="margin-top:24px"><div class="panel-head"><div><h2>Calendar adjustments</h2><p>Weekend due dates move to the next working day. Enter official holidays and BIR circular extensions below; manual form overrides remain exact.</p></div><div class="storage-actions"><button class="btn secondary" id="add-calendar-holiday">Add holiday</button><button class="btn secondary" id="add-calendar-extension">Add extension</button></div></div><div class="table-scroll"><table><thead><tr><th>Type</th><th>Date</th><th>Details</th><th>Source</th><th></th></tr></thead><tbody>${calendarRules.map(rule=>`<tr><td>${esc(rule.rule_type)}</td><td>${esc(rule.rule_date)}</td><td>${esc(rule.rule_type==='extension'?`${rule.form_code} · ${rule.period} ${rule.tax_year} → ${rule.adjusted_due}`:rule.label)}</td><td>${rule.source_url?`<a href="${esc(rule.source_url)}" target="_blank" rel="noopener">Source</a>`:'—'}</td><td><button class="link" data-delete-calendar-rule="${rule.id}">Remove</button></td></tr>`).join('')||'<tr><td colspan="5" class="empty">No holiday or extension entries added.</td></tr>'}</tbody></table></div><div class="summary-line">Verify with the <a href="https://www.bir.gov.ph/" target="_blank" rel="noopener">official BIR tax calendar</a>, <a href="https://www.bir.gov.ph/bir-forms" target="_blank" rel="noopener">BIR form directory</a>, and applicable circulars before filing.</div></div>`;
+  return `<div class="panel" style="margin-top:24px"><div class="panel-head"><div><h2>Calendar adjustments</h2><p>Weekend due dates move to the next working day. Official holidays and BIR circular extensions are listed below; manual form overrides remain exact.</p></div>${isAdministrator()?'<div class="storage-actions"><button class="btn secondary" id="add-calendar-holiday">Add holiday</button><button class="btn secondary" id="add-calendar-extension">Add extension</button></div>':''}</div><div class="table-scroll"><table><thead><tr><th>Type</th><th>Date</th><th>Details</th><th>Source</th>${isAdministrator()?'<th></th>':''}</tr></thead><tbody>${calendarRules.map(rule=>`<tr><td>${esc(rule.rule_type)}</td><td>${esc(rule.rule_date)}</td><td>${esc(rule.rule_type==='extension'?`${rule.form_code} · ${rule.period} ${rule.tax_year} → ${rule.adjusted_due}`:rule.label)}</td><td>${rule.source_url?`<a href="${esc(rule.source_url)}" target="_blank" rel="noopener">Source</a>`:'—'}</td>${isAdministrator()?`<td><button class="link" data-delete-calendar-rule="${rule.id}">Remove</button></td>`:''}</tr>`).join('')||`<tr><td colspan="${isAdministrator()?5:4}" class="empty">No holiday or extension entries added.</td></tr>`}</tbody></table></div><div class="summary-line">Verify with the <a href="https://www.bir.gov.ph/" target="_blank" rel="noopener">official BIR tax calendar</a>, <a href="https://www.bir.gov.ph/bir-forms" target="_blank" rel="noopener">BIR form directory</a>, and applicable circulars before filing.</div></div>`;
 }
 function openCalendarRuleDialog(type){
   const dialog=document.createElement('dialog');dialog.className='calendar-rule-dialog';
@@ -499,10 +502,10 @@ deadlineModal=function(id){const f=forms.find(x=>x.id===id),m=document.querySele
 deadlineModal=function(id,reuse=false){
   const f=forms.find(x=>x.id===id);if(!f)return;
   const m=workspaceDialog(reuse);
-  m.innerHTML=`<h2>${esc(f.id)}</h2><p>${esc(f.name)}</p><div class="schedule-edit-list">${f.periods.map(p=>`<div class="schedule-edit-row"><span class="schedule-period">${esc(p)}</span><span class="schedule-date">${esc(due(f,p,year))}</span></div>`).join('')}</div><div class="modal-actions"><button type="button" class="btn" id="cancel">Close</button><button type="button" class="btn primary" id="edit-schedule">Edit schedule</button></div>`;
+  m.innerHTML=`<h2>${esc(f.id)}</h2><p>${esc(f.name)}</p><div class="schedule-edit-list">${f.periods.map(p=>`<div class="schedule-edit-row"><span class="schedule-period">${esc(p)}</span><span class="schedule-date">${esc(due(f,p,year))}</span></div>`).join('')}</div><div class="modal-actions"><button type="button" class="btn" id="cancel">Close</button>${isAdministrator()?'<button type="button" class="btn primary" id="edit-schedule">Edit schedule</button>':''}</div>`;
   m.showModal();
   m.querySelector('#cancel').onclick=()=>closeModal(m);
-  m.querySelector('#edit-schedule').onclick=()=>{
+  m.querySelector('#edit-schedule')?.addEventListener('click',()=>{
     const editor=workspaceDialog();
     editor.innerHTML=`<h2>Edit ${esc(f.id)} schedule</h2><form id="schedule-form"><div class="schedule-edit-list">${f.periods.map(p=>`<div class="schedule-edit-row"><span class="schedule-period">${esc(p)}</span><input type="hidden" name="period" value="${esc(p)}"><input type="date" name="date" value="${esc(due(f,p,year))}"></div>`).join('')}</div><div class="modal-actions"><button type="button" class="btn" id="cancel-edit">Cancel</button><button class="btn primary">Save schedule</button></div></form>`;
     editor.querySelector('#cancel-edit').onclick=()=>dismissWorkspaceDialog(editor);
@@ -515,12 +518,12 @@ deadlineModal=function(id,reuse=false){
       closeModal(editor,()=>deadlineModal(id,true));render();notify('Schedule updated.');
     };
     editor.showModal();
-  };
+  });
 };
 
 // Deadline management controls.
 const originalDeadlineCards=deadlines;
-deadlines=function(){return heading('Deadline reference','A shared reference for forms, covered periods, and filing schedules.','<button class="btn primary" id="add-deadline">＋ Add deadline</button>')+`<div class="deadline-grid">${forms.map(f=>`<button class="deadline-card" data-deadline="${f.id}"><div class="card-code">${f.id}</div><h2>${esc(f.name)}</h2><div class="card-meta"><span>${f.frequency||(f.periods[0]==='Annual'?'Annual':f.id==='1601-C'?'Monthly':'Quarterly')}</span><span>${f.periods.length} periods</span></div><div class="card-periods">${f.periods.slice(0,5).join(' · ')}${f.periods.length>5?' · …':''}</div><span class="card-link">View schedule →</span><span class="card-edit" data-edit-deadline="${f.id}">Edit</span></button>`).join('')}</div>`};
+deadlines=function(){return heading('Deadline reference','A shared reference for forms, covered periods, and filing schedules.')+`<div class="deadline-grid">${forms.map(f=>`<button class="deadline-card" data-deadline="${f.id}"><div class="card-code">${f.id}</div><h2>${esc(f.name)}</h2><div class="card-meta"><span>${f.frequency||(f.periods[0]==='Annual'?'Annual':f.id==='1601-C'?'Monthly':'Quarterly')}</span><span>${f.periods.length} periods</span></div><div class="card-periods">${f.periods.slice(0,5).join(' · ')}${f.periods.length>5?' · …':''}</div><span class="card-link">View schedule →</span>${isAdministrator()?`<span class="card-edit" data-edit-deadline="${f.id}">Edit</span>`:''}</button>`).join('')}</div>${calendarRulesPanel()}`};
 const priorBind=bind;bind=function(){priorBind();document.querySelector('#add-deadline')?.addEventListener('click',()=>deadlineEditModal());document.querySelectorAll('[data-edit-deadline]').forEach(b=>b.onclick=e=>{e.stopPropagation();deadlineEditModal(b.dataset.editDeadline)})};
 function deadlineEditModal(id){
   const f=forms.find(x=>x.id===id)||{id:'',name:'',periods:['Q1'],dates:['04-30']},m=document.querySelector('#modal');
@@ -780,7 +783,7 @@ function setUserAvatarSlot(element,username,photo){
 }
 function setAuthState(loggedIn,authInfo,animate=false){
   if(loggedIn){
-    const comp=authInfo?.company||'EOO Tax & Accounting';
+    const comp=authInfo?.company||'TaxGuard';
     const firmEl=document.querySelector('.firm .firm-info');
     if(firmEl)firmEl.innerHTML=`${esc(comp)}<small>Compliance team</small>`;
     const loginDisplay=document.querySelector('#login-company-display');
@@ -810,6 +813,29 @@ function setAuthState(loggedIn,authInfo,animate=false){
     document.body.classList.add('logged-out');
   }
 }
+function showAuthenticationMode(needsSetup){
+  const login=document.querySelector('#login-form'),setup=document.querySelector('#setup-form');
+  if(!login||!setup)return;
+  login.hidden=needsSetup;setup.hidden=!needsSetup;
+  const title=document.querySelector('#auth-panel-title'),description=document.querySelector('#auth-panel-description');
+  if(title)title.textContent=needsSetup?'Set Up TaxGuard':'Sign In to Workspace';
+  if(description)description.textContent=needsSetup?'Create the first administrator account for this workstation.':'Authenticate with your company workstation credentials to continue.';
+  (needsSetup?document.querySelector('#setup-company'):document.querySelector('#login-username'))?.focus();
+}
+function authenticationStatus(){
+  if(database?.authStatus)return database.authStatus();
+  let users=[];try{users=JSON.parse(localStorage.getItem('taxguard_users')||'[]');}catch{}
+  return {needsSetup:users.length===0,company:users[0]?.company_name||'TaxGuard'};
+}
+function setupFirstAdministrator(data){
+  if(database?.setupAdministrator)return database.setupAdministrator(data);
+  const status=authenticationStatus();
+  if(!status.needsSetup)throw Error('Administrator setup has already been completed.');
+  const users=[{id:1,username:data.username,company_name:data.company_name,role:'Admin',is_active:1,password:data.password}];
+  localStorage.setItem('taxguard_users',JSON.stringify(users));
+  localStorage.setItem('taxguard_company_name',data.company_name);
+  return {created:true,username:data.username,company:data.company_name};
+}
 function attemptLogin(username,password){
   const alertEl=document.querySelector('#login-error-alert');
   const submitBtn=document.querySelector('#login-btn');
@@ -835,17 +861,16 @@ function attemptLogin(username,password){
       const match=usersList.find(u=>u.username.toLowerCase()===username.trim().toLowerCase());
       if(match){
         if(match.password===password&&match.is_active!==0){
-          result={authenticated:true,company:match.company_name||'EOO Tax & Accounting',username:match.username,role:match.role||'Staff'};
+          result={authenticated:true,company:match.company_name||'TaxGuard',username:match.username,role:match.role||'Staff'};
         }else{
           throw Error('Invalid username or password.');
         }
-      }else if(username.trim().toLowerCase()==='admin'&&password==='taxguard2026'){
-        result={authenticated:true,company:'EOO Tax & Accounting',username:'admin',role:'Admin'};
       }else{
         throw Error('Invalid username or password.');
       }
     }
     if(result&&result.authenticated){
+      loadAuthenticatedWorkspace();
       const dataStr=JSON.stringify(result);
       sessionStorage.setItem('taxguard_auth',dataStr);
       localStorage.removeItem('taxguard_auth');
@@ -863,9 +888,16 @@ function attemptLogin(username,password){
   }
 }
 function handleLogout(){
+  try{database?.logout?.();}catch{}
   sessionStorage.removeItem('taxguard_auth');
+  sessionStorage.removeItem('taxguard_session_token');
   localStorage.removeItem('taxguard_auth');
+  state={clients:[],filings:{}};databaseRevision=undefined;customClientFields=[];calendarRules=[];
   setAuthState(false);
+  const loginForm=document.querySelector('#login-form');loginForm?.reset();
+  const password=document.querySelector('#login-password');if(password)password.type='password';
+  const toggle=document.querySelector('#toggle-pw-btn');if(toggle)toggle.textContent='👁';
+  document.querySelector('#login-username')?.focus();
   notify('Signed out successfully.');
 }
 document.querySelector('#login-form')?.addEventListener('submit',e=>{
@@ -874,13 +906,21 @@ document.querySelector('#login-form')?.addEventListener('submit',e=>{
   const p=document.querySelector('#login-password')?.value;
   attemptLogin(u,p);
 });
-document.querySelector('#fill-demo-btn')?.addEventListener('click',()=>{
-  const u=document.querySelector('#login-username');
-  const p=document.querySelector('#login-password');
-  if(u)u.value='admin';
-  if(p)p.value='taxguard2026';
-  const alertEl=document.querySelector('#login-error-alert');
-  if(alertEl)alertEl.style.display='none';
+document.querySelector('#setup-form')?.addEventListener('submit',e=>{
+  e.preventDefault();
+  const form=e.currentTarget,error=document.querySelector('#setup-error-alert'),button=document.querySelector('#setup-btn');
+  if(error)error.style.display='none';
+  const company=form.elements.company.value.trim(),username=form.elements.username.value.trim(),password=form.elements.password.value,confirmation=form.elements.password_confirmation.value;
+  if(password!==confirmation){if(error){error.textContent='Passwords do not match.';error.style.display='block';}return;}
+  button.disabled=true;
+  try{
+    setupFirstAdministrator({company_name:company,username,password});
+    document.querySelector('#login-company-display').textContent=company;
+    document.querySelector('#login-username').value=username;
+    form.reset();showAuthenticationMode(false);
+    const notice=document.querySelector('#login-error-alert');notice.textContent='Administrator created. Sign in with your new credentials.';notice.style.display='block';
+  }catch(err){if(error){error.textContent=err.message||'Administrator setup failed.';error.style.display='block';}}
+  finally{button.disabled=false;}
 });
 document.querySelector('#toggle-pw-btn')?.addEventListener('click',()=>{
   const p=document.querySelector('#login-password');
@@ -896,10 +936,13 @@ document.querySelector('#header-logout-btn')?.addEventListener('click',handleLog
 
 const initialAuth=getStoredAuth();
 if(initialAuth){
-  setAuthState(true,initialAuth);
+  try{database?.setSessionToken?.(initialAuth.sessionToken);loadAuthenticatedWorkspace();setAuthState(true,initialAuth);render();}
+  catch(error){sessionStorage.removeItem('taxguard_auth');sessionStorage.removeItem('taxguard_session_token');setAuthState(false);try{const status=authenticationStatus();showAuthenticationMode(status.needsSetup);if(status.company)document.querySelector('#login-company-display').textContent=status.company;}catch{}const alert=document.querySelector('#login-error-alert');if(alert){alert.textContent='Your session expired. Sign in again.';alert.style.display='block';}}
 }else{
   setAuthState(false);
+  try{const status=authenticationStatus();showAuthenticationMode(status.needsSetup);if(status.company)document.querySelector('#login-company-display').textContent=status.company;}catch(error){const alert=document.querySelector('#login-error-alert');if(alert){alert.textContent=error.message;alert.style.display='block';}}
 }
+window.addEventListener('taxguard-session-expired',()=>{if(document.body.classList.contains('logged-out'))return;sessionStorage.removeItem('taxguard_auth');sessionStorage.removeItem('taxguard_session_token');state={clients:[],filings:{}};databaseRevision=undefined;customClientFields=[];calendarRules=[];setAuthState(false);document.querySelector('#login-form')?.reset();const password=document.querySelector('#login-password');if(password)password.type='password';const toggle=document.querySelector('#toggle-pw-btn');if(toggle)toggle.textContent='👁';showAuthenticationMode(false);const alert=document.querySelector('#login-error-alert');if(alert){alert.textContent='Your session expired. Sign in again.';alert.style.display='block';}});
 // Calendar date in the workstation's timezone, including the hours before UTC midnight.
 function localDate(now=new Date()) {
   return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;

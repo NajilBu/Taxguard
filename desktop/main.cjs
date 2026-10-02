@@ -17,14 +17,8 @@ else app.whenReady().then(async()=>{
   const filename=smoke
     ? path.join(app.getPath('userData'),'taxguard.db')
     : (process.env.TAXGUARD_DB_PATH || (app.isPackaged ? path.join(app.getPath('userData'),'taxguard.db') : path.join(root,'database/taxguard.db')));
-  if(app.isPackaged && !fs.existsSync(filename)){
-    fs.mkdirSync(path.dirname(filename), {recursive:true});
-    const templateDb = path.join(root, 'database/taxguard.db');
-    if(fs.existsSync(templateDb)){
-      try { fs.copyFileSync(templateDb, filename); } catch(e){}
-    }
-  }
   db=new Store(filename,root);
+  db.revokeSessions('electron');
   if(!smoke)seedSamples(db,root);
   if(!smoke){
     try{
@@ -35,12 +29,20 @@ else app.whenReady().then(async()=>{
     }catch(error){console.error('Automatic backup failed:',error);}
   }
   const valid=e=>e.sender===win?.webContents && e.senderFrame===win.webContents.mainFrame;
-  ipcMain.on('records:sync',(e,action,data,revision)=>{
+  const authorize=(e,token,action)=>{if(!valid(e))throw Error('Untrusted database request.');return db.authorizeSession(token,'electron',action);};
+  ipcMain.on('records:sync',(e,action,data,revision,sessionToken)=>{
+    let auditTransaction=false;
     try{
       if(!valid(e))throw Error('Untrusted database request.');
+      let session=null;if(!['auth:status','auth:setup','login','logout'].includes(action))session=db.authorizeSession(sessionToken,'electron',action);
+      const auditBefore=db.auditSnapshot(action);
+      auditTransaction=db.isAuditedAction(action);if(auditTransaction)db.db.exec('BEGIN IMMEDIATE');
       let value;
       if(action==='load')value=db.load();
-      else if(action==='login')value=db.login(data?.username,data?.password);
+      else if(action==='auth:status')value=db.authStatus();
+      else if(action==='auth:setup')value=db.setupAdministrator(data);
+      else if(action==='login'){value=db.login(data?.username,data?.password);value.sessionToken=db.createSession(value.username,'electron');}
+      else if(action==='logout')value={signedOut:db.revokeSession(sessionToken,'electron')};
       else if(action==='users:list')value=db.getUsers();
       else if(action==='users:save')value=db.saveUser(data);
       else if(action==='users:delete')value=db.deleteUser(data?.id);
@@ -62,52 +64,55 @@ else app.whenReady().then(async()=>{
       else if(action==='calendar:list')value=db.getCalendarRules();
       else if(action==='calendar:save')value=db.saveCalendarRule(data);
       else if(action==='calendar:delete')value=db.deleteCalendarRule(data?.id);
+      else if(action==='audit:list')value=db.getAuditLogs(data);
       else if(action==='save'||action==='forms'){
         if(!Number.isSafeInteger(revision))throw Error('Reload TaxGuard before saving.');
         value=action==='save'?db.saveState(data,revision):db.saveForms(data,revision);
       }
       else throw Error('Unsupported database operation.');
+      db.recordAudit(session,action,data,auditBefore);
+      if(auditTransaction){db.db.exec('COMMIT');auditTransaction=false;}
       e.returnValue={ok:true,value};
-    }catch(err){e.returnValue={ok:false,error:err.message}}
+    }catch(err){if(auditTransaction)try{db.db.exec('ROLLBACK')}catch{}e.returnValue={ok:false,error:err.message}}
   });
-  ipcMain.handle('records:import',async(e)=>{
-    if(!valid(e))throw Error('Untrusted import request.');
+  ipcMain.handle('records:import',async(e,sessionToken)=>{
+    const session=authorize(e,sessionToken,'records:import');
     const result=await dialog.showOpenDialog(win,{title:'Import TaxGuard browser records',properties:['openFile'],filters:[{name:'TaxGuard export',extensions:['json']}]});
     if(result.canceled)return null;
     const filename=result.filePaths[0];
     if(fs.statSync(filename).size>10*1024*1024)throw Error('Import file exceeds 10 MB.');
-    return db.importWorkspace(JSON.parse(fs.readFileSync(filename,'utf8')));
+    db.db.exec('BEGIN IMMEDIATE');try{const value=db.importWorkspace(JSON.parse(fs.readFileSync(filename,'utf8')));db.recordAudit(session,'records:import',{});db.db.exec('COMMIT');return value;}catch(error){try{db.db.exec('ROLLBACK')}catch{}throw error;}
   });
-  ipcMain.handle('data:export-xlsx',async(e,sections,options)=>{
-    if(!valid(e))throw Error('Untrusted Excel export request.');
+  ipcMain.handle('data:export-xlsx',async(e,sections,options,sessionToken)=>{
+    authorize(e,sessionToken,'data:export-xlsx');
     return excelTransfer.exportWorkbook(db,sections,options);
   });
-  ipcMain.handle('data:save-xlsx',async(e,sections,options)=>{
-    if(!valid(e))throw Error('Untrusted Excel export request.');
+  ipcMain.handle('data:save-xlsx',async(e,sections,options,sessionToken)=>{
+    authorize(e,sessionToken,'data:export-xlsx');
     const result=await dialog.showSaveDialog(win,{title:'Save TaxGuard Excel export',defaultPath:`TaxGuard-data-${new Date().toISOString().slice(0,10)}.xlsx`,filters:[{name:'Excel workbook',extensions:['xlsx']}]});
     if(result.canceled||!result.filePath)return {saved:false};
     const base64=await excelTransfer.exportWorkbook(db,sections,options);
     fs.writeFileSync(result.filePath,Buffer.from(base64,'base64'));
     return {saved:true,path:result.filePath};
   });
-  ipcMain.handle('data:read-xlsx',async(e,base64)=>{
-    if(!valid(e))throw Error('Untrusted Excel import request.');
+  ipcMain.handle('data:read-xlsx',async(e,base64,sessionToken)=>{
+    authorize(e,sessionToken,'data:read-xlsx');
     return excelTransfer.readWorkbook(base64);
   });
-  ipcMain.handle('clients:import-xlsx',async(e,base64)=>{
-    if(!valid(e))throw Error('Untrusted Excel import request.');
+  ipcMain.handle('clients:import-xlsx',async(e,base64,sessionToken)=>{
+    const session=authorize(e,sessionToken,'clients:import-xlsx');
     if(typeof base64!=='string'||base64.length>7*1024*1024||!/^[A-Za-z0-9+/]+={0,2}$/.test(base64))throw Error('Invalid Excel file.');
-    return db.importClientsRows(await parseXlsxBuffer(Buffer.from(base64,'base64')));
+    const rows=await parseXlsxBuffer(Buffer.from(base64,'base64'));db.db.exec('BEGIN IMMEDIATE');try{const value=db.importClientsRows(rows);db.recordAudit(session,'clients:import-xlsx',{});db.db.exec('COMMIT');return value;}catch(error){try{db.db.exec('ROLLBACK')}catch{}throw error;}
   });
-  ipcMain.handle('backup:save',async(e)=>{
-    if(!valid(e))throw Error('Untrusted backup request.');
+  ipcMain.handle('backup:save',async(e,sessionToken)=>{
+    authorize(e,sessionToken,'backup:save');
     const result=await dialog.showSaveDialog(win,{title:'Save complete TaxGuard backup',defaultPath:'TaxGuard-backup-'+new Date().toISOString().slice(0,10)+'.db',filters:[{name:'TaxGuard SQLite backup',extensions:['db']} ]});
     if(result.canceled||!result.filePath)return {saved:false};
     db.backupTo(result.filePath);Store.validateBackup(result.filePath);
     return {saved:true,filePath:result.filePath};
   });
-  ipcMain.handle('backup:restore',async(e)=>{
-    if(!valid(e))throw Error('Untrusted restore request.');
+  ipcMain.handle('backup:restore',async(e,sessionToken)=>{
+    const session=authorize(e,sessionToken,'backup:restore');
     const chosen=await dialog.showOpenDialog(win,{title:'Choose TaxGuard backup to restore',properties:['openFile'],filters:[{name:'TaxGuard SQLite backup',extensions:['db']} ]});
     if(chosen.canceled)return {restored:false};
     const backup=chosen.filePaths[0];
@@ -120,16 +125,18 @@ else app.whenReady().then(async()=>{
     try{
       fs.copyFileSync(backup,filename);
       db=new Store(filename,root);
+      db.revokeSessions('electron');
+      db.recordAudit(session,'backup:restore',{filename:path.basename(backup)});
       if(db.db.prepare('PRAGMA integrity_check').get().integrity_check!=='ok')throw Error('Restored database failed integrity check.');
     }catch(error){
       try{db?.close()}catch{}
-      fs.copyFileSync(recovery,filename);db=new Store(filename,root);
+      fs.copyFileSync(recovery,filename);db=new Store(filename,root);db.revokeSessions('electron');
       throw error;
     }
     win.reload();return {restored:true,recovery};
   });
-  ipcMain.handle('report:savePdf',async(e,defaultName)=>{
-    if(!valid(e))throw Error('Untrusted PDF save request.');
+  ipcMain.handle('report:savePdf',async(e,defaultName,sessionToken)=>{
+    authorize(e,sessionToken,'report:savePdf');
     const currentWin=BrowserWindow.fromWebContents(e.sender)||win;
     const pdfData=await e.sender.printToPDF({
       printBackground:true,
@@ -186,6 +193,12 @@ else app.whenReady().then(async()=>{
   if(smoke){
     await win.webContents.executeJavaScript(`(async()=>{
       if(getComputedStyle(document.querySelector('aside')).display!=='none')throw Error('Sidebar visible before login');
+      if(window.taxguardDB.authStatus().needsSetup){
+        const setup=document.querySelector('#setup-form');
+        if(!setup?.checkVisibility()||document.querySelector('#login-form')?.checkVisibility())throw Error('First-run administrator setup is not shown');
+        setup.elements.company.value='Smoke Test Firm';setup.elements.username.value='admin';setup.elements.password.value='taxguard2026';setup.elements.password_confirmation.value='taxguard2026';setup.requestSubmit();
+        if(window.taxguardDB.authStatus().needsSetup||!document.querySelector('#login-form')?.checkVisibility())throw Error('First-run administrator was not created');
+      }
       attemptLogin('admin','taxguard2026');
       await new Promise(r=>setTimeout(r,550));
       if(!document.body.classList.contains('logged-in'))throw Error('Desktop login failed');
@@ -249,4 +262,4 @@ else app.whenReady().then(async()=>{
   }
 }).catch(e=>{console.error(e);if(!smoke)dialog.showErrorBox('TaxGuard could not open',e.message);app.exit(1)});
 app.on('window-all-closed',()=>app.quit());
-app.on('will-quit',()=>db?.close());
+app.on('will-quit',()=>{try{db?.revokeSessions('electron')}catch{}db?.close()});

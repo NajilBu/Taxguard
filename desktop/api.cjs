@@ -10,14 +10,22 @@ let input='';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data',chunk=>{input+=chunk;if(input.length>10*1024*1024)process.exit(1)});
 process.stdin.on('end',async()=>{
-  let store;
+  let store,auditTransaction=false;
   try{
-    const {action,data,revision}=JSON.parse(input);
+    const {action,data,revision,sessionToken}=JSON.parse(input);
     store=new Store(process.env.TAXGUARD_DB_PATH||path.join(root,'database/taxguard.db'),root);
     seedSamples(store,root);
+    const publicActions=new Set(['auth:status','auth:setup','login']);
+    let session=null;
+    if(!publicActions.has(action)&&action!=='logout')session=store.authorizeSession(sessionToken,'browser',action);
+    const auditBefore=store.auditSnapshot(action);
+    auditTransaction=store.isAuditedAction(action);if(auditTransaction)store.db.exec('BEGIN IMMEDIATE');
     let value;
     if(action==='load')value=store.load();
-    else if(action==='login')value=store.login(data?.username,data?.password);
+    else if(action==='auth:status')value=store.authStatus();
+    else if(action==='auth:setup')value=store.setupAdministrator(data);
+    else if(action==='login'){value=store.login(data?.username,data?.password);value.sessionToken=store.createSession(value.username,'browser');}
+    else if(action==='logout')value={signedOut:store.revokeSession(sessionToken,'browser')};
     else if(action==='users:list')value=store.getUsers();
     else if(action==='users:save')value=store.saveUser(data);
     else if(action==='users:delete')value=store.deleteUser(data?.id);
@@ -43,11 +51,14 @@ process.stdin.on('end',async()=>{
     else if(action==='calendar:list')value=store.getCalendarRules();
     else if(action==='calendar:save')value=store.saveCalendarRule(data);
     else if(action==='calendar:delete')value=store.deleteCalendarRule(data?.id);
+    else if(action==='audit:list')value=store.getAuditLogs(data);
     else if(action==='save'||action==='forms'){
       if(!Number.isSafeInteger(revision))throw Error('Reload TaxGuard before saving.');
       value=action==='save'?store.saveState(data,revision):store.saveForms(data,revision);
     }else throw Error('Unsupported database operation.');
+    store.recordAudit(session,action,data,auditBefore);
+    if(auditTransaction){store.db.exec('COMMIT');auditTransaction=false;}
     process.stdout.write(JSON.stringify({ok:true,value}));
-  }catch(error){process.stdout.write(JSON.stringify({ok:false,error:error.message}));}
+  }catch(error){if(auditTransaction)try{store.db.exec('ROLLBACK')}catch{}process.stdout.write(JSON.stringify({ok:false,error:error.message}));}
   finally{store?.close();}
 });

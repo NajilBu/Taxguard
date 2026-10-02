@@ -19,17 +19,33 @@ test('PHP browser saves and desktop saves share SQLite; invalid and stale writes
   let store;
   try{
     const url=`http://127.0.0.1:${port}/api.php`;
-    async function request(action,data,revision,origin){
-      const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...(origin?{Origin:origin}:{})},body:JSON.stringify({action,data,revision})});
+    let sessionToken='';
+    async function request(action,data,revision,origin,token=sessionToken){
+      const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...(origin?{Origin:origin}:{})},body:JSON.stringify({action,data,revision,sessionToken:token})});
       return response.json();
     }
-    let loaded;
+    let status;
     for(let i=0;i<40;i++){
-      try{loaded=await request('load');break}catch(error){if(i===39)throw error;await new Promise(r=>setTimeout(r,50));}
+      try{status=await request('auth:status');break}catch(error){if(i===39)throw error;await new Promise(r=>setTimeout(r,50));}
     }
-    assert.equal(loaded.ok,true);assert.equal(loaded.value.clients.length,6);
+    assert.equal(status.value.needsSetup,true);
+    assert.equal((await request('load')).ok,false);
+    assert.equal((await request('auth:setup',{company_name:'API Test Firm',username:'owner',password:'secure123'})).ok,true);
+    assert.equal((await request('auth:status')).value.needsSetup,false);
+    const login=await request('login',{username:'owner',password:'secure123'});assert.equal(login.value.authenticated,true);sessionToken=login.value.sessionToken;
+    const loaded=await request('load');assert.equal(loaded.ok,true);assert.equal(loaded.value.clients.length,6);
+    assert.equal((await request('users:save',{username:'staff',company_name:'API Test Firm',role:'Staff',password:'staff123'})).ok,true);
+    const staffLogin=await request('login',{username:'staff',password:'staff123'}),staffToken=staffLogin.value.sessionToken;
+    assert.equal((await request('load',undefined,undefined,undefined,staffToken)).ok,true);
+    assert.equal((await request('data:export',{sections:['clients']},undefined,undefined,staffToken)).ok,true);
+    for(const [action,data] of [['users:list'],['company:profile:save',{name:'No'}],['clients:fields:save',{fields:['RDO']}],['calendar:save',{rule_type:'holiday'}],['forms',loaded.value.forms],['data:import',{payload:{},sections:[]}],['audit:list',{}]] ){
+      const denied=await request(action,data,loaded.value.revision,undefined,staffToken);
+      assert.equal(denied.ok,false,action);assert.match(denied.error,/Administrator access is required/,action);
+    }
+    assert.equal((await request('auth:setup',{company_name:'Other',username:'other',password:'secure123'})).ok,false);
     const state=loaded.value;state.clients[0].remarks='Saved through PHP';
     const saved=await request('save',state,state.revision);assert.equal(saved.ok,true);
+    const audit=await request('audit:list',{});assert.equal(audit.ok,true);assert.ok(audit.value.some(row=>row.action==='save'&&row.username==='owner'));
     store=new Store(file,root);assert.equal(store.load().clients[0].remarks,'Saved through PHP');
     const forms=store.load().forms;forms[0].overrides={2026:{Q1:'2026-05-20'}};
     const updated=await request('forms',forms,saved.value);assert.equal(updated.ok,true);
@@ -41,5 +57,7 @@ test('PHP browser saves and desktop saves share SQLite; invalid and stale writes
     assert.equal((await request('save',invalid,current.value.revision)).ok,false);
     assert.deepEqual((await request('load')).value,current.value);
     assert.equal((await request('load',undefined,undefined,'https://unrelated.example')).ok,false);
+    assert.equal((await request('logout')).value.signedOut,true);
+    assert.equal((await request('load')).ok,false);
   }finally{store?.close();server.kill();}
 });

@@ -1,19 +1,24 @@
 (() => {
   if(window.taxguardDB || !['localhost','127.0.0.1','[::1]'].includes(location.hostname))return;
+  let sessionToken=sessionStorage.getItem('taxguard_session_token')||'';
   function call(action,data,revision){
     const request=new XMLHttpRequest();
     // The existing form handlers save synchronously in both browser and Electron.
     request.open('POST',new URL('api.php',location.href),false);
     request.setRequestHeader('Content-Type','application/json');
-    request.send(JSON.stringify({action,data,revision}));
+    request.send(JSON.stringify({action,data,revision,sessionToken}));
     let result;
     try{result=JSON.parse(request.responseText)}catch{throw Error('SQLite is unavailable. Start Apache and open http://localhost/Taxguard/.');}
-    if(request.status!==200||!result.ok)throw Error(result.error||'Database unavailable.');
+    if(request.status!==200||!result.ok){const message=result.error||'Database unavailable.';if(/Session expired|Authentication required/.test(message))window.dispatchEvent(new Event('taxguard-session-expired'));throw Error(message);}
     return result.value;
   }
   window.taxguardDB={
     load:()=>call('load'),
-    login:(username,password)=>call('login',{username,password}),
+    authStatus:()=>call('auth:status'),
+    setupAdministrator:(data)=>call('auth:setup',data),
+    login:(username,password)=>{const result=call('login',{username,password});sessionToken=result.sessionToken;sessionStorage.setItem('taxguard_session_token',sessionToken);return result;},
+    setSessionToken:(token)=>{sessionToken=String(token||'');if(sessionToken)sessionStorage.setItem('taxguard_session_token',sessionToken);else sessionStorage.removeItem('taxguard_session_token');},
+    logout:()=>{try{return call('logout')}finally{sessionToken='';sessionStorage.removeItem('taxguard_session_token');}},
     save:(data,revision)=>call('save',data,revision),
     saveForms:(data,revision)=>call('forms',data,revision),
     getUsers:()=>call('users:list'),
@@ -38,8 +43,9 @@
     getCalendarRules:()=>call('calendar:list'),
     saveCalendarRule:(rule)=>call('calendar:save',rule),
     deleteCalendarRule:(id)=>call('calendar:delete',{id})
+    ,getAuditLogs:(filters)=>call('audit:list',filters)
   };
-  try{window.taxguardDB.load();}catch(error){
+  try{window.taxguardDB.authStatus();}catch(error){
     document.querySelector('#content').textContent=error.message;
     document.querySelector('footer span').textContent='SQLite connection failed';
     // No silent switch to separate browser records when the database is down.

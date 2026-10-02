@@ -1,6 +1,12 @@
 module.exports=async function(win,root){
   win.webContents.setBackgroundThrottling(false);
   await win.webContents.executeJavaScript('('+async function(){
+    if(window.taxguardDB.authStatus().needsSetup){
+      const setup=document.querySelector('#setup-form');
+      if(!setup?.checkVisibility()||document.querySelector('#login-form')?.checkVisibility())throw Error('First-run administrator setup is not shown');
+      setup.elements.company.value='Smoke Test Firm';setup.elements.username.value='admin';setup.elements.password.value='taxguard2026';setup.elements.password_confirmation.value='taxguard2026';setup.requestSubmit();
+      if(window.taxguardDB.authStatus().needsSetup||!document.querySelector('#login-form')?.checkVisibility())throw Error('First-run administrator was not created');
+    }
     attemptLogin('admin','taxguard2026');
     await new Promise(r=>setTimeout(r,550));
     if(!document.body.classList.contains('logged-in'))throw Error('Login failed');
@@ -205,6 +211,7 @@ module.exports=async function(win,root){
     document.querySelector('#deadline-form #cancel').click();await new Promise(r=>setTimeout(r,240));
     go('settings');
     if(!document.querySelector('.profile-settings-grid .company-settings-panel')||!document.querySelector('.profile-settings-grid .custom-fields-panel'))throw Error('Profile settings cards are not side by side');
+    if(!document.querySelector('.audit-log-panel')||!document.querySelector('#audit-filter-form')||!document.querySelector('.audit-log-panel tbody tr'))throw Error('Admin audit log viewer is missing');
     document.querySelector('#new-client-field').value='Smoke field';document.querySelector('#add-client-field-form').requestSubmit();
     if(!document.querySelector('#confirm-client-field-change'))throw Error('Add field confirmation missing');
     document.querySelector('#confirm-client-field-change').click();await new Promise(r=>setTimeout(r,240));
@@ -299,6 +306,7 @@ module.exports=async function(win,root){
   await win.webContents.executeJavaScript('('+async function(){
     const logo=document.querySelector('.firm .avatar img');
     if(!logo||!logo.src.startsWith('data:image/png;base64,'))throw Error('Company logo missing on entry');
+    if(window.taxguardDB.authStatus().needsSetup)window.taxguardDB.setupAdministrator({company_name:'Smoke Test Firm',username:'admin',password:'taxguard2026'});
     attemptLogin('admin','taxguard2026');
     await new Promise(r=>setTimeout(r,550));
     if(!document.querySelector('.firm .avatar img'))throw Error('Company logo lost after sign-in');
@@ -406,4 +414,23 @@ module.exports=async function(win,root){
     document.querySelector('#close-client').click();
   }.toString()+')()');
   console.log('DOCUMENT VAULT PASS');
+  await win.webContents.executeJavaScript('('+async function(){
+    window.taxguardDB.saveUser({username:'staff-smoke',company_name:'Smoke Test Firm',role:'Staff',password:'staff123',is_active:1});
+    handleLogout();
+    if(document.querySelector('#login-username').value||document.querySelector('#login-password').value)throw Error('Logout retained credentials');
+    attemptLogin('staff-smoke','staff123');await new Promise(r=>setTimeout(r,550));
+    if(getCurrentUserAuth().role!=='Staff')throw Error('Staff login failed');
+    go('settings');
+    if(!document.querySelector('#open-data-export')||document.querySelector('#open-data-import')||document.querySelector('#btn-add-user')||document.querySelector('#restore-full-backup')||document.querySelector('.audit-log-panel')||!document.querySelector('.profile-settings-grid')?.hidden)throw Error('Staff settings expose administrator controls');
+    let denied=false;try{window.taxguardDB.getUsers()}catch(error){denied=/Administrator access is required/.test(error.message)}
+    if(!denied)throw Error('Staff bypassed user-management authorization');
+    go('deadlines');document.querySelector('[data-deadline]').click();
+    if(document.querySelector('#edit-schedule'))throw Error('Staff can edit a filing schedule');
+    document.querySelector('#cancel').click();
+    handleLogout();
+    if(document.querySelector('#login-username').value||document.querySelector('#login-password').value||document.querySelector('#login-password').type!=='password')throw Error('Logout did not reset the credential form');
+    const before=document.querySelector('#toast')?.textContent||'';window.dispatchEvent(new Event('focus'));await new Promise(r=>setTimeout(r,100));
+    if((document.querySelector('#toast')?.textContent||'')!==before||document.querySelector('#toast')?.textContent.includes('Authentication required'))throw Error('Signed-out focus attempted to refresh protected records');
+  }.toString()+')()');
+  console.log('ROLE ACCESS AND LOGOUT RESET PASS');
 };
