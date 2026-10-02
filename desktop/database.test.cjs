@@ -685,7 +685,7 @@ test('Avatar initials resolve dynamically from username and firm (e.g. FeviRuth 
 test('Release package excludes live data, samples, tests, and development artifacts',()=>{
   const manifest=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
   const packaged=new Set(manifest.build.files);
-  assert.equal(manifest.version,'0.9.1');
+  assert.equal(manifest.version,'0.9.2');
   assert.equal(packaged.has('database/schema.sql'),true);
   assert.equal(packaged.has('database/default-forms.json'),true);
   assert.equal(packaged.has('database/**/*'),false);

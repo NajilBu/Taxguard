@@ -1,4 +1,4 @@
-# TaxGuard 0.9.1
+# TaxGuard 0.9.2
 
 TaxGuard tracks clients, required BIR forms, filing records, and deadlines in a local SQLite database. During development, the Electron app and XAMPP localhost interface use `database/taxguard.db`. A packaged desktop installation creates its database in Electron's application-data directory. The localhost interface requires Apache and the Node gateway in `api.php`; the desktop app runs with Electron. GitHub Pages is a separate browser-storage demo and cannot access the local SQLite database.
 
