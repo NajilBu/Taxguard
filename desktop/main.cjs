@@ -9,6 +9,9 @@ const excelTransfer=require('./excel-transfer.cjs');
 const root=path.join(__dirname,'..');
 const smoke=process.argv.includes('--smoke-test');
 const entry=pathToFileURL(path.join(root,'index.html')).href;
+// TaxGuard does not require GPU rendering. Disabling it avoids startup failures
+// on Windows workstations with missing or incompatible graphics runtimes.
+app.disableHardwareAcceleration();
 if(smoke)app.setPath('userData',fs.mkdtempSync(path.join(require('node:os').tmpdir(),'taxguard-smoke-')));
 let db,win;
 if(!app.requestSingleInstanceLock())app.quit();

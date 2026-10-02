@@ -36,6 +36,9 @@
       "desktop/icon.png",
       "database/schema.sql",
       "database/default-forms.json",
+      "README.md",
+      "RELEASE_NOTES.md",
+      "TaxGuard_User_Manual.docx",
       "favicon.ico",
       "favicon.png"
     ],
